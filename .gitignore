@@ -1,0 +1,7 @@
+data/*.db
+data/*.db-*
+data/*.pid
+logs/*.log
+node_modules/
+.idea
+.vscode

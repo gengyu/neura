@@ -1,0 +1,19 @@
+{
+  "name": "neura",
+  "version": "0.1.0",
+  "description": "A UI-less personal agent runtime.",
+  "type": "module",
+  "bin": {
+    "neura": "./bin/neura.js"
+  },
+  "scripts": {
+    "neura": "node ./bin/neura.js",
+    "start": "node ./bin/neura.js start",
+    "stop": "node ./bin/neura.js stop",
+    "status": "node ./bin/neura.js status",
+    "test": "node ./scripts/smoke-test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
