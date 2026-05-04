@@ -37,7 +37,6 @@ export class Repository {
         name = excluded.name,
         direction = excluded.direction,
         type = excluded.type,
-        enabled = excluded.enabled,
         config = excluded.config,
         updated_at = excluded.updated_at;
     `);
@@ -47,8 +46,21 @@ export class Repository {
     this.store.run(`UPDATE plugins SET status = ${this.store.value(status)}, updated_at = ${this.store.value(nowIso())} WHERE id = ${this.store.value(id)};`);
   }
 
+  setPluginEnabled(id, enabled) {
+    this.store.run(`
+      UPDATE plugins
+      SET enabled = ${enabled ? 1 : 0}, status = ${this.store.value(enabled ? "enabled" : "disabled")}, updated_at = ${this.store.value(nowIso())}
+      WHERE id = ${this.store.value(id)};
+    `);
+  }
+
   listPlugins() {
     return this.store.query("SELECT id, name, direction, type, status, enabled, config, created_at AS createdAt, updated_at AS updatedAt FROM plugins ORDER BY direction, id;");
+  }
+
+  isPluginEnabled(id) {
+    const rows = this.store.query(`SELECT enabled FROM plugins WHERE id = ${this.store.value(id)} LIMIT 1;`);
+    return rows[0]?.enabled === 1;
   }
 
   createInputEvent({ pluginId, type, content, metadata = {} }) {
@@ -90,6 +102,15 @@ export class Repository {
       VALUES (${this.store.value(task.id)}, ${this.store.value(inputEventId)}, ${this.store.value(type)}, ${this.store.value(task.status)}, ${this.store.value(task.createdAt)});
     `);
     return task;
+  }
+
+  listTasks(limit = 20) {
+    return this.store.query(`
+      SELECT id, input_event_id AS inputEventId, type, status, result, error, created_at AS createdAt, finished_at AS finishedAt
+      FROM tasks
+      ORDER BY created_at DESC
+      LIMIT ${Number(limit)};
+    `);
   }
 
   finishTask(id, status, result, error = null) {
@@ -206,6 +227,19 @@ export class Repository {
     return best && best.score >= threshold ? best : null;
   }
 
+  listInputEvents(limit = 20) {
+    return this.store.query(`
+      SELECT id, plugin_id AS pluginId, type, content, metadata, status, created_at AS createdAt, processed_at AS processedAt
+      FROM input_events
+      ORDER BY created_at DESC
+      LIMIT ${Number(limit)};
+    `).map((event) => ({
+      ...event,
+      content: parseJson(event.content),
+      metadata: parseJson(event.metadata)
+    }));
+  }
+
   createOutputEvent({ pluginId, type, content, status = "sent" }) {
     const now = nowIso();
     const event = { id: createId("output"), pluginId, type, content, status, createdAt: now, sentAt: now };
@@ -214,6 +248,29 @@ export class Repository {
       VALUES (${this.store.value(event.id)}, ${this.store.value(pluginId)}, ${this.store.value(type)}, ${this.store.json(content)}, ${this.store.value(status)}, ${this.store.value(now)}, ${this.store.value(now)});
     `);
     return event;
+  }
+
+  createToolCall({ toolName, input, output = null, status, riskLevel = "low" }) {
+    const now = nowIso();
+    const id = createId("tool");
+    this.store.run(`
+      INSERT INTO tool_calls (id, tool_name, input, output, status, risk_level, created_at, finished_at)
+      VALUES (${this.store.value(id)}, ${this.store.value(toolName)}, ${this.store.json(input)}, ${this.store.json(output)}, ${this.store.value(status)}, ${this.store.value(riskLevel)}, ${this.store.value(now)}, ${this.store.value(now)});
+    `);
+    return { id, toolName, input, output, status, riskLevel, createdAt: now, finishedAt: now };
+  }
+
+  listToolCalls(limit = 20) {
+    return this.store.query(`
+      SELECT id, tool_name AS toolName, input, output, status, risk_level AS riskLevel, created_at AS createdAt, finished_at AS finishedAt
+      FROM tool_calls
+      ORDER BY created_at DESC
+      LIMIT ${Number(limit)};
+    `).map((call) => ({
+      ...call,
+      input: parseJson(call.input),
+      output: parseJson(call.output)
+    }));
   }
 
   log(level, type, message, metadata = {}) {
@@ -280,6 +337,16 @@ function parseJsonArray(value) {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
+  }
+}
+
+function parseJson(value) {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
   }
 }
 

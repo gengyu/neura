@@ -3,5 +3,8 @@ data/*.db-*
 data/*.pid
 logs/*.log
 node_modules/
+.env
+.env.*
+!.env.example
 .idea
 .vscode

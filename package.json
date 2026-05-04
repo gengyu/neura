@@ -11,9 +11,25 @@
     "start": "node ./bin/neura.js start",
     "stop": "node ./bin/neura.js stop",
     "status": "node ./bin/neura.js status",
+    "check": "node --check bin/neura.js && node --check apps/daemon/daemon.js && node --check apps/daemon/webhook.js && node --check apps/daemon/folder-watch.js && node --check packages/model/provider.js",
     "test": "node ./scripts/smoke-test.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.92.0",
+    "better-sqlite3": "^12.9.0",
+    "chokidar": "^5.0.0",
+    "commander": "^14.0.3",
+    "dotenv": "^17.4.2",
+    "fastify": "^5.8.5",
+    "openai": "^6.35.0",
+    "zod": "^4.4.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }

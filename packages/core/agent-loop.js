@@ -8,13 +8,15 @@ export class AgentLoop {
     this.modelProvider = modelProvider;
   }
 
-  process(inputEvent) {
+  async process(inputEvent) {
     const task = this.repository.createTask(inputEvent.id, "agent_loop");
     this.repository.updateInputEventStatus(inputEvent.id, INPUT_STATUSES.PROCESSING);
     this.repository.log("info", "input", "Input event accepted", { inputEventId: inputEvent.id, type: inputEvent.type });
 
     try {
-      const analysis = this.modelProvider.analyzeInput(inputEvent, { forceOutput: true });
+      const initialTags = ["Neura", "智能体", "运行时", "记忆", "插件"];
+      const contextMemories = initialTags.flatMap((tag) => this.repository.searchMemories(tag, 2)).slice(0, 5);
+      const analysis = await this.modelProvider.analyzeInput(inputEvent, { forceOutput: true, relatedMemories: contextMemories });
       const { summary, tags, remembered } = analysis;
       const relatedMemories = tags
         .filter((tag) => tag !== "未分类")
@@ -52,6 +54,7 @@ export class AgentLoop {
       const result = {
         status: "completed",
         provider: analysis.provider,
+        fallbackReason: analysis.fallbackReason ?? null,
         summary,
         tags,
         remembered,

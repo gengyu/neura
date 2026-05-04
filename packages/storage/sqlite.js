@@ -1,41 +1,35 @@
-import { execFileSync } from "node:child_process";
+import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-
-function escapeSql(value) {
-  if (value === null || value === undefined) return "NULL";
-  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "NULL";
-  if (typeof value === "boolean") return value ? "1" : "0";
-  return `'${String(value).replaceAll("'", "''")}'`;
-}
 
 export class SQLiteStore {
   constructor(databasePath) {
     this.databasePath = resolve(databasePath);
     mkdirSync(dirname(this.databasePath), { recursive: true });
+    this.db = new Database(this.databasePath);
+    this.db.pragma("journal_mode = WAL");
+    this.quoteStatement = this.db.prepare("SELECT quote(?) AS value");
   }
 
   run(sql) {
-    execFileSync("sqlite3", ["-cmd", ".timeout 5000", this.databasePath, sql], { encoding: "utf8" });
+    this.db.exec(sql);
   }
 
   query(sql) {
-    const output = execFileSync("sqlite3", ["-json", "-cmd", ".timeout 5000", this.databasePath, sql], { encoding: "utf8" });
-    const trimmed = output.trim();
-    return trimmed ? JSON.parse(trimmed) : [];
+    return this.db.prepare(sql).all();
   }
 
   value(value) {
-    return escapeSql(value);
+    if (value === null || value === undefined) return "NULL";
+    return this.quoteStatement.get(value).value;
   }
 
   json(value) {
-    return escapeSql(JSON.stringify(value ?? {}));
+    return this.value(JSON.stringify(value ?? {}));
   }
 
   initialize() {
     this.run(`
-      PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,

@@ -7,6 +7,24 @@ export class PermissionPolicy {
     return this.policy.allowOutput === true;
   }
 
+  assertFileReadAllowed(path) {
+    if (!this.policy.allowFileRead) {
+      throw new Error(`File read is blocked by policy: ${path}`);
+    }
+  }
+
+  assertFileWriteAllowed(path) {
+    if (!this.policy.allowFileWrite) {
+      throw new Error(`File write is blocked by policy: ${path}`);
+    }
+  }
+
+  assertNetworkAllowed(url) {
+    if (!this.policy.allowNetwork) {
+      throw new Error(`Network request is blocked by policy: ${url}`);
+    }
+  }
+
   describe() {
     return {
       output: this.policy.allowOutput ? "allowed" : "blocked",

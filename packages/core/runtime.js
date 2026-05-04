@@ -5,10 +5,13 @@ import { registerConfiguredPlugins } from "../plugin-sdk/registry.js";
 import { Repository } from "../storage/repository.js";
 import { SQLiteStore } from "../storage/sqlite.js";
 import { RUNTIME_STATUSES } from "../shared/types.js";
+import { loadLocalEnv } from "../shared/env.js";
 import { createModelProvider } from "../model/provider.js";
+import { ToolRegistry } from "../tools/tools.js";
 import { AgentLoop } from "./agent-loop.js";
 
 export function createRuntime() {
+  loadLocalEnv();
   const store = new SQLiteStore(resolve(config.storage.databasePath));
   store.initialize();
   const repository = new Repository(store);
@@ -16,21 +19,27 @@ export function createRuntime() {
   registerConfiguredPlugins(repository, config.plugins);
   const policy = new PermissionPolicy(config.policy);
   const modelProvider = createModelProvider(config.model);
+  const tools = new ToolRegistry({ repository, policy });
   const agentLoop = new AgentLoop({ repository, policy, modelProvider });
 
   return {
     config,
     repository,
     policy,
+    tools,
     agentLoop,
-    input(content, options = {}) {
+    async input(content, options = {}) {
+      const pluginId = options.pluginId ?? "cli-input";
+      if (!repository.isPluginEnabled(pluginId)) {
+        throw new Error(`Input plugin is disabled: ${pluginId}`);
+      }
       const event = repository.createInputEvent({
-        pluginId: options.pluginId ?? "cli-input",
+        pluginId,
         type: options.type ?? "text",
         content,
         metadata: options.metadata ?? {}
       });
-      return { event, result: agentLoop.process(event) };
+      return { event, result: await agentLoop.process(event) };
     },
     markRunning(pid = process.pid) {
       repository.setRuntimeState("runtime", {
@@ -39,8 +48,8 @@ export function createRuntime() {
         startedAt: new Date().toISOString(),
         heartbeatAt: new Date().toISOString()
       });
-      repository.setPluginStatus("cli-input", "running");
-      repository.setPluginStatus("cli-output", "running");
+      if (repository.isPluginEnabled("cli-input")) repository.setPluginStatus("cli-input", "running");
+      if (repository.isPluginEnabled("cli-output")) repository.setPluginStatus("cli-output", "running");
       repository.log("info", "runtime", "Runtime started", { pid });
     },
     heartbeat(pid = process.pid) {
@@ -61,8 +70,9 @@ export function createRuntime() {
         stoppedAt: new Date().toISOString(),
         reason
       });
-      repository.setPluginStatus("cli-input", "enabled");
-      repository.setPluginStatus("cli-output", "enabled");
+      for (const plugin of repository.listPlugins()) {
+        repository.setPluginStatus(plugin.id, plugin.enabled ? "enabled" : "disabled");
+      }
       repository.log("info", "runtime", "Runtime stopped", { reason });
     },
     status() {

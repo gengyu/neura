@@ -1,7 +1,13 @@
 import { execFileSync } from "node:child_process";
 
 function run(args) {
-  return execFileSync(process.execPath, ["./bin/neura.js", ...args], { encoding: "utf8" });
+  return execFileSync(process.execPath, ["./bin/neura.js", ...args], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      NEURA_MODEL_PROVIDER: "rule-based"
+    }
+  });
 }
 
 const input = run(["input", "我想让 Neura 的插件体系保持极简，只分为输入插件和输出插件"]);

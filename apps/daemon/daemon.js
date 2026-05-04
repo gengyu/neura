@@ -1,10 +1,14 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { createRuntime } from "../../packages/core/runtime.js";
+import { startFolderWatcher } from "./folder-watch.js";
+import { startWebhookServer } from "./webhook.js";
 
 const runtime = createRuntime();
 const stopRequestPath = resolve("data/neura.stop");
-runtime.markRunning(process.pid);
+await runtime.markRunning(process.pid);
+const webhookServer = await startWebhookServer(runtime);
+const folderWatcher = startFolderWatcher(runtime);
 
 const interval = setInterval(() => {
   if (existsSync(stopRequestPath)) {
@@ -17,6 +21,8 @@ const interval = setInterval(() => {
 
 function shutdown(signal) {
   clearInterval(interval);
+  webhookServer?.close?.();
+  folderWatcher?.close?.();
   runtime.markStopped(signal);
   process.exit(0);
 }
