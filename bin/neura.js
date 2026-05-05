@@ -37,6 +37,13 @@ tasks.command("list").description("列出最近任务").action(listTasks);
 const memory = program.command("memory").description("记忆");
 memory.command("list").description("列出记忆").action(listMemories);
 memory.command("search").description("搜索记忆").argument("<query...>", "搜索词").action(searchMemories);
+memory.command("reindex").description("重建记忆向量索引").action(reindexMemories);
+
+const agents = program.command("agents").description("Agent 管理");
+agents.command("list").description("列出 Agent").action(listAgents);
+agents.command("current").description("查看当前 Agent").action(currentAgent);
+agents.command("create").description("创建 Agent").argument("<name...>", "Agent 名称").option("--id <id>", "Agent ID").action(createAgent);
+agents.command("use").description("切换当前 Agent").argument("<agentId>", "Agent ID").action(useAgent);
 
 const plugins = program.command("plugins").description("插件");
 plugins.command("list").description("列出插件").action(listPlugins);
@@ -156,6 +163,7 @@ async function status() {
           : "无输入，无输出";
 
   console.log(`状态: ${alive ? "运行中" : "已停止"}`);
+  console.log(`当前 Agent: ${runtime.repository.getActiveAgentId()}`);
   if (alive && pid) console.log(`PID: ${pid}`);
   console.log(`连接状态: ${connection}`);
   console.log(`输入插件: ${state.inputCount}`);
@@ -257,6 +265,46 @@ async function searchMemories(queryParts) {
     console.log(`  标签: ${memory.tags.join(", ")}`);
     console.log(`  内容: ${memory.content}`);
   }
+}
+
+async function reindexMemories() {
+  const runtime = await createRuntime();
+  const count = runtime.repository.reindexMemoryVectors();
+  console.log(`已重建记忆向量索引: ${count}`);
+}
+
+async function listAgents() {
+  const runtime = await createRuntime();
+  const activeId = runtime.repository.getActiveAgentId();
+  for (const agent of runtime.repository.listAgents()) {
+    console.log(`${agent.id}${agent.id === activeId ? " *" : ""}`);
+    console.log(`  名称: ${agent.name}`);
+    console.log(`  状态: ${agent.status}`);
+    console.log(`  创建时间: ${agent.createdAt}`);
+  }
+}
+
+async function currentAgent() {
+  const runtime = await createRuntime();
+  const agent = runtime.repository.getActiveAgent();
+  console.log(`${agent.id}`);
+  console.log(`  名称: ${agent.name}`);
+  console.log(`  状态: ${agent.status}`);
+}
+
+async function createAgent(nameParts, options) {
+  const runtime = await createRuntime();
+  const agent = runtime.repository.createAgent({
+    id: options.id,
+    name: nameParts.join(" ").trim()
+  });
+  console.log(`已创建 Agent: ${agent.id}`);
+}
+
+async function useAgent(agentId) {
+  const runtime = await createRuntime();
+  const agent = runtime.repository.setActiveAgent(agentId);
+  console.log(`已切换 Agent: ${agent.id}`);
 }
 
 async function listPlugins() {

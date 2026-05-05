@@ -22,6 +22,11 @@ export default {
       enabled: true,
       path: "data/screenshots",
       extensions: [".png", ".jpg", ".jpeg", ".webp"]
+    },
+    adminUi: {
+      enabled: true,
+      host: "127.0.0.1",
+      port: 8790
     }
   },
   model: {
@@ -49,6 +54,15 @@ export default {
     { id: "screenshot-watch-input", enabled: true },
     { id: "cli-output", enabled: true },
     { id: "local-log-output", enabled: true },
-    { id: "system-notification-output", enabled: true }
+    { id: "system-notification-output", enabled: true },
+    {
+      id: "admin-ui-output",
+      enabled: true,
+      config: {
+        enabled: true,
+        host: "127.0.0.1",
+        port: 8790
+      }
+    }
   ]
 };

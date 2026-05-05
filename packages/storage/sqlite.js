@@ -50,6 +50,7 @@ export class SQLiteStore {
       );
       CREATE TABLE IF NOT EXISTS input_events (
         id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL DEFAULT 'default-agent',
         plugin_id TEXT NOT NULL,
         type TEXT NOT NULL,
         content TEXT NOT NULL,
@@ -60,6 +61,7 @@ export class SQLiteStore {
       );
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL DEFAULT 'default-agent',
         input_event_id TEXT,
         type TEXT NOT NULL,
         status TEXT NOT NULL,
@@ -70,6 +72,7 @@ export class SQLiteStore {
       );
       CREATE TABLE IF NOT EXISTS memories (
         id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL DEFAULT 'default-agent',
         content TEXT NOT NULL,
         summary TEXT NOT NULL,
         tags TEXT NOT NULL,
@@ -81,6 +84,7 @@ export class SQLiteStore {
       );
       CREATE TABLE IF NOT EXISTS output_events (
         id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL DEFAULT 'default-agent',
         plugin_id TEXT NOT NULL,
         type TEXT NOT NULL,
         content TEXT NOT NULL,
@@ -90,6 +94,7 @@ export class SQLiteStore {
       );
       CREATE TABLE IF NOT EXISTS tool_calls (
         id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL DEFAULT 'default-agent',
         tool_name TEXT NOT NULL,
         input TEXT NOT NULL,
         output TEXT,
@@ -100,6 +105,7 @@ export class SQLiteStore {
       );
       CREATE TABLE IF NOT EXISTS confirmation_requests (
         id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL DEFAULT 'default-agent',
         tool_name TEXT NOT NULL,
         payload TEXT NOT NULL,
         reason TEXT NOT NULL,
@@ -110,6 +116,7 @@ export class SQLiteStore {
       );
       CREATE TABLE IF NOT EXISTS schedules (
         id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL DEFAULT 'default-agent',
         name TEXT NOT NULL,
         mode TEXT NOT NULL,
         content TEXT NOT NULL,
@@ -122,6 +129,7 @@ export class SQLiteStore {
       );
       CREATE TABLE IF NOT EXISTS logs (
         id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL DEFAULT 'default-agent',
         level TEXT NOT NULL,
         type TEXT NOT NULL,
         message TEXT NOT NULL,
@@ -133,6 +141,27 @@ export class SQLiteStore {
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS memory_vectors (
+        memory_id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL DEFAULT 'default-agent',
+        vector TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
+    this.ensureColumn("input_events", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.ensureColumn("tasks", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.ensureColumn("memories", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.ensureColumn("output_events", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.ensureColumn("tool_calls", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.ensureColumn("confirmation_requests", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.ensureColumn("schedules", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.ensureColumn("logs", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+  }
+
+  ensureColumn(table, column, definition) {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!columns.some((item) => item.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+    }
   }
 }

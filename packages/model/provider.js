@@ -57,8 +57,9 @@ export class OpenAICompatibleModelProvider {
 
     const systemPrompt = [
       "你是 Neura 的 Agent Loop 分析器。",
-      "你必须先调用 search_memory 获取相关记忆，再提交最终分析结果。",
+      "如果已有上下文提示里已经提供了相关记忆，可以直接使用；如果没有或明显不足，必须先调用 search_memory 获取相关记忆，再提交最终分析结果。",
       "除非输入是纯文件路径且需要读取内容，否则不要调用 read_file。",
+      "你可以使用 call_model 对某段内容做子任务推理（如二次总结、翻译、分类），使用 http_request 从外部 API 获取实时信息。",
       "如果 write_file、delete_file、execute_command 返回 confirmationRequired=true，说明动作已进入待确认队列。此时应把 shouldOutput 设为 true，并在摘要里明确告诉用户需要审批。",
       "shouldOutput 必须谨慎判断：只有用户主动请求结果、外部系统需要响应、任务完成需要告知、出现错误、需要确认、发现重要信息或提醒时才为 true。普通沉淀型输入可为 false。",
       "当你收集到足够信息后，必须调用 record_neura_input_analysis 工具来提交最终分析结果。"
@@ -68,8 +69,9 @@ export class OpenAICompatibleModelProvider {
       { role: "user", content: buildOpenAIUserContent(inputEvent, context) }
     ];
     const allTools = [...extraTools, ANALYSIS_TOOL_OPENAI];
-    let searchedMemory = false;
+    let searchedMemory = hasRelatedMemories(context);
     const relatedMemories = new Map();
+    collectRelatedMemories(relatedMemories, context.relatedMemories ?? []);
 
     for (let i = 0; i < 5; i++) {
       const response = await this.client.chat.completions.create({
@@ -185,8 +187,9 @@ export class AnthropicCompatibleModelProvider {
 
     const systemPrompt = [
       "你是 Neura 的 Agent Loop 分析器。",
-      "你必须先调用 search_memory 获取相关记忆，再提交最终分析结果。",
+      "如果已有上下文提示里已经提供了相关记忆，可以直接使用；如果没有或明显不足，必须先调用 search_memory 获取相关记忆，再提交最终分析结果。",
       "除非输入是纯文件路径且需要读取内容，否则不要调用 read_file。",
+      "你可以使用 call_model 对某段内容做子任务推理（如二次总结、翻译、分类），使用 http_request 从外部 API 获取实时信息。",
       "如果 write_file、delete_file、execute_command 返回 confirmationRequired=true，说明动作已进入待确认队列。此时应把 shouldOutput 设为 true，并在摘要里明确告诉用户需要审批。",
       "shouldOutput 必须谨慎判断：只有用户主动请求结果、外部系统需要响应、任务完成需要告知、出现错误、需要确认、发现重要信息或提醒时才为 true。普通沉淀型输入可为 false。",
       "当你收集到足够信息后，必须调用 record_neura_input_analysis 工具来提交最终分析结果。"
@@ -195,8 +198,9 @@ export class AnthropicCompatibleModelProvider {
       { role: "user", content: buildAnthropicUserContent(inputEvent, context) }
     ];
     const allTools = [...extraTools, ANALYSIS_TOOL_ANTHROPIC];
-    let searchedMemory = false;
+    let searchedMemory = hasRelatedMemories(context);
     const relatedMemories = new Map();
+    collectRelatedMemories(relatedMemories, context.relatedMemories ?? []);
 
     for (let i = 0; i < 5; i++) {
       const response = await this.client.messages.create({
@@ -330,7 +334,7 @@ function buildPrompt(inputEvent, context) {
     `输入类型：${inputEvent.type}`,
     `输入内容：${formatContent(inputEvent.content)}`,
     `已有上下文提示：${formatExistingContext(context)}`,
-    "请先使用 search_memory 搜索与输入最相关的记忆。搜索查询应来自输入主题、实体、项目名、关键决策或用户意图。",
+    "如果已有上下文提示为空或不足，请使用 search_memory 搜索与输入最相关的记忆。搜索查询应来自输入主题、实体、项目名、关键决策或用户意图。",
     "请判断是否值得长期记忆，并给出摘要、标签、重要性和输出决策。",
     "输出决策规则：普通记录/收藏/上下文沉淀通常 shouldOutput=false；用户明确询问、命令执行结果、错误、确认请求、重要提醒或外部同步响应才 shouldOutput=true。"
   ].join("\n");
@@ -410,9 +414,13 @@ function getImageAttachment(inputEvent) {
 
 function formatExistingContext(context = {}) {
   if (Array.isArray(context.relatedMemories) && context.relatedMemories.length > 0) {
-    return context.relatedMemories.map((memory) => memory.id).join(", ");
+    return context.relatedMemories.map((memory) => `${memory.id}: ${memory.summary}`).join("\n");
   }
   return "无，需自行调用 search_memory 检索";
+}
+
+function hasRelatedMemories(context = {}) {
+  return Array.isArray(context.relatedMemories) && context.relatedMemories.length > 0;
 }
 
 function collectRelatedMemories(target, result) {

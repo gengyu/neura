@@ -29,6 +29,7 @@ async function initializePlugins(repository, configPlugins) {
     plugin._enabled = enabled;
     plugin._mergedConfig = mergedConfig;
   }
+  repository.pruneMissingPlugins(loaded.map((plugin) => plugin.id));
 
   return loaded;
 }
@@ -39,12 +40,15 @@ export async function createRuntime() {
   store.initialize();
   const repository = new Repository(store);
   repository.ensureAgent(config.agent);
+  if (!repository.getActiveAgent()) {
+    repository.setActiveAgent(config.agent.id);
+  }
 
   const loadedPlugins = await initializePlugins(repository, config.plugins);
 
   const policy = new PermissionPolicy(config.policy);
   const modelProvider = createModelProvider(config.model);
-  const tools = new ToolRegistry({ repository, policy });
+  const tools = new ToolRegistry({ repository, policy, modelProvider });
   const outputDispatcher = new OutputDispatcher({ repository, plugins: loadedPlugins });
   let runtime;
   const agentLoop = new AgentLoop({
@@ -107,6 +111,7 @@ export async function createRuntime() {
     },
 
     markRunning(pid = process.pid) {
+      repository.setAgentStatus(repository.getActiveAgentId(), "running");
       repository.setRuntimeState("runtime", {
         status: RUNTIME_STATUSES.RUNNING,
         pid,
@@ -139,6 +144,7 @@ export async function createRuntime() {
 
     markStopped(reason = "stopped") {
       const current = repository.getRuntimeState("runtime")?.value ?? {};
+      repository.setAgentStatus(repository.getActiveAgentId(), "stopped");
       repository.setRuntimeState("runtime", {
         ...current,
         status: RUNTIME_STATUSES.STOPPED,

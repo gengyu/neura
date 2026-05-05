@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { createId, nowIso } from "../shared/id.js";
 import { INPUT_STATUSES, TASK_STATUSES } from "../shared/types.js";
 import { similarityScore } from "../memory/memory.js";
+import { createMemoryVector, scoreMemoryVector } from "../memory/vector.js";
 
 export class Repository {
   constructor(store) {
@@ -15,6 +16,52 @@ export class Repository {
       INSERT INTO agents (id, name, status, created_at, updated_at)
       VALUES (${this.store.value(agent.id)}, ${this.store.value(agent.name)}, 'stopped', ${this.store.value(now)}, ${this.store.value(now)})
       ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at;
+    `);
+  }
+
+  createAgent({ id = createId("agent"), name }) {
+    const now = nowIso();
+    this.store.run(`
+      INSERT INTO agents (id, name, status, created_at, updated_at)
+      VALUES (${this.store.value(id)}, ${this.store.value(name)}, 'active', ${this.store.value(now)}, ${this.store.value(now)});
+    `);
+    return { id, name, status: "active", createdAt: now, updatedAt: now };
+  }
+
+  listAgents() {
+    return this.store.query(`
+      SELECT id, name, status, created_at AS createdAt, updated_at AS updatedAt
+      FROM agents
+      ORDER BY created_at ASC;
+    `);
+  }
+
+  setActiveAgent(id) {
+    const agent = this.store.query(`SELECT id FROM agents WHERE id = ${this.store.value(id)} LIMIT 1;`)[0];
+    if (!agent) throw new Error(`Agent not found: ${id}`);
+    this.setRuntimeState("active_agent", { id });
+    return this.getActiveAgent();
+  }
+
+  getActiveAgentId() {
+    return this.getRuntimeState("active_agent")?.value?.id ?? "default-agent";
+  }
+
+  getActiveAgent() {
+    const id = this.getActiveAgentId();
+    return this.store.query(`
+      SELECT id, name, status, created_at AS createdAt, updated_at AS updatedAt
+      FROM agents
+      WHERE id = ${this.store.value(id)}
+      LIMIT 1;
+    `)[0] ?? null;
+  }
+
+  setAgentStatus(id, status) {
+    this.store.run(`
+      UPDATE agents
+      SET status = ${this.store.value(status)}, updated_at = ${this.store.value(nowIso())}
+      WHERE id = ${this.store.value(id)};
     `);
   }
 
@@ -37,6 +84,8 @@ export class Repository {
         name = excluded.name,
         direction = excluded.direction,
         type = excluded.type,
+        status = excluded.status,
+        enabled = excluded.enabled,
         config = excluded.config,
         updated_at = excluded.updated_at;
     `);
@@ -58,14 +107,22 @@ export class Repository {
     return this.store.query("SELECT id, name, direction, type, status, enabled, config, created_at AS createdAt, updated_at AS updatedAt FROM plugins ORDER BY direction, id;");
   }
 
+  pruneMissingPlugins(activeIds) {
+    if (!activeIds.length) return;
+    const ids = activeIds.map((id) => this.store.value(id)).join(", ");
+    this.store.run(`DELETE FROM plugins WHERE id NOT IN (${ids});`);
+  }
+
   isPluginEnabled(id) {
     const rows = this.store.query(`SELECT enabled FROM plugins WHERE id = ${this.store.value(id)} LIMIT 1;`);
     return rows[0]?.enabled === 1;
   }
 
   createInputEvent({ pluginId, type, content, metadata = {} }) {
+    const agentId = this.getActiveAgentId();
     const event = {
       id: createId("input"),
+      agentId,
       pluginId,
       type,
       content,
@@ -74,8 +131,8 @@ export class Repository {
       createdAt: nowIso()
     };
     this.store.run(`
-      INSERT INTO input_events (id, plugin_id, type, content, metadata, status, created_at)
-      VALUES (${this.store.value(event.id)}, ${this.store.value(pluginId)}, ${this.store.value(type)}, ${this.store.json(content)}, ${this.store.json(metadata)}, ${this.store.value(event.status)}, ${this.store.value(event.createdAt)});
+      INSERT INTO input_events (id, agent_id, plugin_id, type, content, metadata, status, created_at)
+      VALUES (${this.store.value(event.id)}, ${this.store.value(agentId)}, ${this.store.value(pluginId)}, ${this.store.value(type)}, ${this.store.json(content)}, ${this.store.json(metadata)}, ${this.store.value(event.status)}, ${this.store.value(event.createdAt)});
     `);
     return event;
   }
@@ -90,16 +147,18 @@ export class Repository {
   }
 
   createTask(inputEventId, type) {
+    const agentId = this.getActiveAgentId();
     const task = {
       id: createId("task"),
+      agentId,
       inputEventId,
       type,
       status: TASK_STATUSES.PROCESSING,
       createdAt: nowIso()
     };
     this.store.run(`
-      INSERT INTO tasks (id, input_event_id, type, status, created_at)
-      VALUES (${this.store.value(task.id)}, ${this.store.value(inputEventId)}, ${this.store.value(type)}, ${this.store.value(task.status)}, ${this.store.value(task.createdAt)});
+      INSERT INTO tasks (id, agent_id, input_event_id, type, status, created_at)
+      VALUES (${this.store.value(task.id)}, ${this.store.value(agentId)}, ${this.store.value(inputEventId)}, ${this.store.value(type)}, ${this.store.value(task.status)}, ${this.store.value(task.createdAt)});
     `);
     return task;
   }
@@ -108,6 +167,7 @@ export class Repository {
     return this.store.query(`
       SELECT id, input_event_id AS inputEventId, type, status, result, error, created_at AS createdAt, finished_at AS finishedAt
       FROM tasks
+      WHERE agent_id = ${this.store.value(this.getActiveAgentId())}
       ORDER BY created_at DESC
       LIMIT ${Number(limit)};
     `);
@@ -123,8 +183,10 @@ export class Repository {
 
   createMemory({ content, summary, tags, sourceInputId, importance, confidence }) {
     const now = nowIso();
+    const agentId = this.getActiveAgentId();
     const memory = {
       id: createId("memory"),
+      agentId,
       content,
       summary,
       tags,
@@ -135,9 +197,10 @@ export class Repository {
       updatedAt: now
     };
     this.store.run(`
-      INSERT INTO memories (id, content, summary, tags, source_input_id, importance, confidence, created_at, updated_at)
-      VALUES (${this.store.value(memory.id)}, ${this.store.value(content)}, ${this.store.value(summary)}, ${this.store.json(tags)}, ${this.store.value(sourceInputId)}, ${importance}, ${confidence}, ${this.store.value(now)}, ${this.store.value(now)});
+      INSERT INTO memories (id, agent_id, content, summary, tags, source_input_id, importance, confidence, created_at, updated_at)
+      VALUES (${this.store.value(memory.id)}, ${this.store.value(agentId)}, ${this.store.value(content)}, ${this.store.value(summary)}, ${this.store.json(tags)}, ${this.store.value(sourceInputId)}, ${importance}, ${confidence}, ${this.store.value(now)}, ${this.store.value(now)});
     `);
+    this.upsertMemoryVector(memory);
     return memory;
   }
 
@@ -162,7 +225,7 @@ export class Repository {
       WHERE id = ${this.store.value(id)};
     `);
 
-    return {
+    const memory = {
       ...existing,
       id,
       content: nextContent,
@@ -173,13 +236,15 @@ export class Repository {
       confidence: nextConfidence,
       updatedAt: now
     };
+    this.upsertMemoryVector(memory);
+    return memory;
   }
 
   getMemory(id) {
     const rows = this.store.query(`
       SELECT id, content, summary, tags, source_input_id AS sourceInputId, importance, confidence, created_at AS createdAt, updated_at AS updatedAt
       FROM memories
-      WHERE id = ${this.store.value(id)}
+      WHERE id = ${this.store.value(id)} AND agent_id = ${this.store.value(this.getActiveAgentId())}
       LIMIT 1;
     `);
     return rows[0] ? decodeMemory(rows[0]) : null;
@@ -187,22 +252,68 @@ export class Repository {
 
   listMemories(limit = 20) {
     return this.store.query(`
-      SELECT id, content, summary, tags, source_input_id AS sourceInputId, importance, confidence, created_at AS createdAt, updated_at AS updatedAt
+      SELECT id, agent_id AS agentId, content, summary, tags, source_input_id AS sourceInputId, importance, confidence, created_at AS createdAt, updated_at AS updatedAt
       FROM memories
+      WHERE agent_id = ${this.store.value(this.getActiveAgentId())}
       ORDER BY created_at DESC
       LIMIT ${Number(limit)};
     `).map(decodeMemory);
   }
 
   searchMemories(query, limit = 20) {
+    const vectorMatches = this.searchMemoriesByVector(query, limit);
+    if (vectorMatches.length > 0) return vectorMatches;
     const like = `%${query}%`;
     return this.store.query(`
-      SELECT id, content, summary, tags, source_input_id AS sourceInputId, importance, confidence, created_at AS createdAt, updated_at AS updatedAt
+      SELECT id, agent_id AS agentId, content, summary, tags, source_input_id AS sourceInputId, importance, confidence, created_at AS createdAt, updated_at AS updatedAt
       FROM memories
-      WHERE content LIKE ${this.store.value(like)} OR summary LIKE ${this.store.value(like)} OR tags LIKE ${this.store.value(like)}
+      WHERE agent_id = ${this.store.value(this.getActiveAgentId())}
+        AND (content LIKE ${this.store.value(like)} OR summary LIKE ${this.store.value(like)} OR tags LIKE ${this.store.value(like)})
       ORDER BY importance DESC, created_at DESC
       LIMIT ${Number(limit)};
-    `).map(decodeMemory);
+    `).map((memory) => ({ ...decodeMemory(memory), vectorScore: 0 }));
+  }
+
+  searchMemoriesByVector(query, limit = 20) {
+    const agentId = this.getActiveAgentId();
+    const queryVector = createMemoryVector(query);
+    const rows = this.store.query(`
+      SELECT m.id, m.agent_id AS agentId, m.content, m.summary, m.tags, m.source_input_id AS sourceInputId, m.importance, m.confidence, m.created_at AS createdAt, m.updated_at AS updatedAt, v.vector
+      FROM memories m
+      JOIN memory_vectors v ON v.memory_id = m.id
+      WHERE m.agent_id = ${this.store.value(agentId)}
+      ORDER BY m.updated_at DESC
+      LIMIT 500;
+    `);
+    return rows
+      .map((row) => {
+        const vector = parseJson(row.vector) ?? [];
+        const score = scoreMemoryVector(queryVector, vector);
+        const { vector: _vector, ...memory } = row;
+        return { ...decodeMemory(memory), vectorScore: Number(score.toFixed(6)) };
+      })
+      .filter((memory) => memory.vectorScore > 0.12)
+      .sort((a, b) => b.vectorScore - a.vectorScore || b.importance - a.importance)
+      .slice(0, Number(limit));
+  }
+
+  upsertMemoryVector(memory) {
+    const now = nowIso();
+    const agentId = memory.agentId ?? this.getActiveAgentId();
+    const vector = createMemoryVector(`${memory.summary}\n${memory.content}\n${(memory.tags ?? []).join(" ")}`);
+    this.store.run(`
+      INSERT INTO memory_vectors (memory_id, agent_id, vector, updated_at)
+      VALUES (${this.store.value(memory.id)}, ${this.store.value(agentId)}, ${this.store.json(vector)}, ${this.store.value(now)})
+      ON CONFLICT(memory_id) DO UPDATE SET vector = excluded.vector, agent_id = excluded.agent_id, updated_at = excluded.updated_at;
+    `);
+  }
+
+  reindexMemoryVectors() {
+    const memories = this.listMemories(10_000);
+    for (const memory of memories) {
+      this.upsertMemoryVector(memory);
+    }
+    return memories.length;
   }
 
   findSimilarMemory({ content, tags }, threshold = 0.78) {
@@ -231,6 +342,7 @@ export class Repository {
     return this.store.query(`
       SELECT id, plugin_id AS pluginId, type, content, metadata, status, created_at AS createdAt, processed_at AS processedAt
       FROM input_events
+      WHERE agent_id = ${this.store.value(this.getActiveAgentId())}
       ORDER BY created_at DESC
       LIMIT ${Number(limit)};
     `).map((event) => ({
@@ -242,11 +354,12 @@ export class Repository {
 
   createOutputEvent({ pluginId, type, content, status = "sent" }) {
     const now = nowIso();
+    const agentId = this.getActiveAgentId();
     const sentAt = status === "sent" ? now : null;
-    const event = { id: createId("output"), pluginId, type, content, status, createdAt: now, sentAt };
+    const event = { id: createId("output"), agentId, pluginId, type, content, status, createdAt: now, sentAt };
     this.store.run(`
-      INSERT INTO output_events (id, plugin_id, type, content, status, created_at, sent_at)
-      VALUES (${this.store.value(event.id)}, ${this.store.value(pluginId)}, ${this.store.value(type)}, ${this.store.json(content)}, ${this.store.value(status)}, ${this.store.value(now)}, ${this.store.value(sentAt)});
+      INSERT INTO output_events (id, agent_id, plugin_id, type, content, status, created_at, sent_at)
+      VALUES (${this.store.value(event.id)}, ${this.store.value(agentId)}, ${this.store.value(pluginId)}, ${this.store.value(type)}, ${this.store.json(content)}, ${this.store.value(status)}, ${this.store.value(now)}, ${this.store.value(sentAt)});
     `);
     return event;
   }
@@ -267,6 +380,7 @@ export class Repository {
     return this.store.query(`
       SELECT id, plugin_id AS pluginId, type, content, status, created_at AS createdAt, sent_at AS sentAt
       FROM output_events
+      WHERE agent_id = ${this.store.value(this.getActiveAgentId())}
       ORDER BY created_at DESC
       LIMIT ${Number(limit)};
     `).map((event) => ({
@@ -277,8 +391,10 @@ export class Repository {
 
   createConfirmationRequest({ toolName, payload, reason }) {
     const now = nowIso();
+    const agentId = this.getActiveAgentId();
     const request = {
       id: createId("confirm"),
+      agentId,
       toolName,
       payload,
       reason,
@@ -288,8 +404,8 @@ export class Repository {
       resolvedAt: null
     };
     this.store.run(`
-      INSERT INTO confirmation_requests (id, tool_name, payload, reason, status, resolution, created_at, resolved_at)
-      VALUES (${this.store.value(request.id)}, ${this.store.value(toolName)}, ${this.store.json(payload)}, ${this.store.value(reason)}, 'pending', NULL, ${this.store.value(now)}, NULL);
+      INSERT INTO confirmation_requests (id, agent_id, tool_name, payload, reason, status, resolution, created_at, resolved_at)
+      VALUES (${this.store.value(request.id)}, ${this.store.value(agentId)}, ${this.store.value(toolName)}, ${this.store.json(payload)}, ${this.store.value(reason)}, 'pending', NULL, ${this.store.value(now)}, NULL);
     `);
     return request;
   }
@@ -298,14 +414,16 @@ export class Repository {
     const rows = this.store.query(`
       SELECT id, tool_name AS toolName, payload, reason, status, resolution, created_at AS createdAt, resolved_at AS resolvedAt
       FROM confirmation_requests
-      WHERE id = ${this.store.value(id)}
+      WHERE id = ${this.store.value(id)} AND agent_id = ${this.store.value(this.getActiveAgentId())}
       LIMIT 1;
     `);
     return rows[0] ? decodeConfirmationRequest(rows[0]) : null;
   }
 
   listConfirmationRequests(status = null, limit = 20) {
-    const where = status ? `WHERE status = ${this.store.value(status)}` : "";
+    const where = status
+      ? `WHERE agent_id = ${this.store.value(this.getActiveAgentId())} AND status = ${this.store.value(status)}`
+      : `WHERE agent_id = ${this.store.value(this.getActiveAgentId())}`;
     return this.store.query(`
       SELECT id, tool_name AS toolName, payload, reason, status, resolution, created_at AS createdAt, resolved_at AS resolvedAt
       FROM confirmation_requests
@@ -328,8 +446,10 @@ export class Repository {
 
   createSchedule({ name, mode, content, runAt, intervalMs = null, status = "active" }) {
     const now = nowIso();
+    const agentId = this.getActiveAgentId();
     const schedule = {
       id: createId("schedule"),
+      agentId,
       name,
       mode,
       content,
@@ -341,9 +461,10 @@ export class Repository {
       updatedAt: now
     };
     this.store.run(`
-      INSERT INTO schedules (id, name, mode, content, run_at, interval_ms, status, last_run_at, created_at, updated_at)
+      INSERT INTO schedules (id, agent_id, name, mode, content, run_at, interval_ms, status, last_run_at, created_at, updated_at)
       VALUES (
         ${this.store.value(schedule.id)},
+        ${this.store.value(agentId)},
         ${this.store.value(name)},
         ${this.store.value(mode)},
         ${this.store.json(content)},
@@ -359,7 +480,9 @@ export class Repository {
   }
 
   listSchedules(status = null, limit = 50) {
-    const where = status ? `WHERE status = ${this.store.value(status)}` : "";
+    const where = status
+      ? `WHERE agent_id = ${this.store.value(this.getActiveAgentId())} AND status = ${this.store.value(status)}`
+      : `WHERE agent_id = ${this.store.value(this.getActiveAgentId())}`;
     return this.store.query(`
       SELECT id, name, mode, content, run_at AS runAt, interval_ms AS intervalMs, status, last_run_at AS lastRunAt, created_at AS createdAt, updated_at AS updatedAt
       FROM schedules
@@ -373,7 +496,7 @@ export class Repository {
     return this.store.query(`
       SELECT id, name, mode, content, run_at AS runAt, interval_ms AS intervalMs, status, last_run_at AS lastRunAt, created_at AS createdAt, updated_at AS updatedAt
       FROM schedules
-      WHERE status = 'active' AND run_at <= ${this.store.value(now)}
+      WHERE agent_id = ${this.store.value(this.getActiveAgentId())} AND status = 'active' AND run_at <= ${this.store.value(now)}
       ORDER BY run_at ASC;
     `).map(decodeSchedule);
   }
@@ -383,7 +506,7 @@ export class Repository {
     const existing = this.store.query(`
       SELECT id, name, mode, content, run_at AS runAt, interval_ms AS intervalMs, status, last_run_at AS lastRunAt, created_at AS createdAt, updated_at AS updatedAt
       FROM schedules
-      WHERE id = ${this.store.value(id)}
+      WHERE id = ${this.store.value(id)} AND agent_id = ${this.store.value(this.getActiveAgentId())}
       LIMIT 1;
     `)[0];
     if (!existing) return null;
@@ -404,28 +527,30 @@ export class Repository {
     this.store.run(`
       UPDATE schedules
       SET status = ${this.store.value(status)}, updated_at = ${this.store.value(nowIso())}
-      WHERE id = ${this.store.value(id)};
+      WHERE id = ${this.store.value(id)} AND agent_id = ${this.store.value(this.getActiveAgentId())};
     `);
   }
 
   deleteSchedule(id) {
-    this.store.run(`DELETE FROM schedules WHERE id = ${this.store.value(id)};`);
+    this.store.run(`DELETE FROM schedules WHERE id = ${this.store.value(id)} AND agent_id = ${this.store.value(this.getActiveAgentId())};`);
   }
 
   createToolCall({ toolName, input, output = null, status, riskLevel = "low" }) {
     const now = nowIso();
+    const agentId = this.getActiveAgentId();
     const id = createId("tool");
     this.store.run(`
-      INSERT INTO tool_calls (id, tool_name, input, output, status, risk_level, created_at, finished_at)
-      VALUES (${this.store.value(id)}, ${this.store.value(toolName)}, ${this.store.json(input)}, ${this.store.json(output)}, ${this.store.value(status)}, ${this.store.value(riskLevel)}, ${this.store.value(now)}, ${this.store.value(now)});
+      INSERT INTO tool_calls (id, agent_id, tool_name, input, output, status, risk_level, created_at, finished_at)
+      VALUES (${this.store.value(id)}, ${this.store.value(agentId)}, ${this.store.value(toolName)}, ${this.store.json(input)}, ${this.store.json(output)}, ${this.store.value(status)}, ${this.store.value(riskLevel)}, ${this.store.value(now)}, ${this.store.value(now)});
     `);
-    return { id, toolName, input, output, status, riskLevel, createdAt: now, finishedAt: now };
+    return { id, agentId, toolName, input, output, status, riskLevel, createdAt: now, finishedAt: now };
   }
 
   listToolCalls(limit = 20) {
     return this.store.query(`
       SELECT id, tool_name AS toolName, input, output, status, risk_level AS riskLevel, created_at AS createdAt, finished_at AS finishedAt
       FROM tool_calls
+      WHERE agent_id = ${this.store.value(this.getActiveAgentId())}
       ORDER BY created_at DESC
       LIMIT ${Number(limit)};
     `).map((call) => ({
@@ -437,9 +562,10 @@ export class Repository {
 
   log(level, type, message, metadata = {}) {
     const createdAt = nowIso();
+    const agentId = this.getActiveAgentId();
     this.store.run(`
-      INSERT INTO logs (id, level, type, message, metadata, created_at)
-      VALUES (${this.store.value(createId("log"))}, ${this.store.value(level)}, ${this.store.value(type)}, ${this.store.value(message)}, ${this.store.json(metadata)}, ${this.store.value(createdAt)});
+      INSERT INTO logs (id, agent_id, level, type, message, metadata, created_at)
+      VALUES (${this.store.value(createId("log"))}, ${this.store.value(agentId)}, ${this.store.value(level)}, ${this.store.value(type)}, ${this.store.value(message)}, ${this.store.json(metadata)}, ${this.store.value(createdAt)});
     `);
     const logPath = resolve("logs/neura.log");
     mkdirSync(dirname(logPath), { recursive: true });
@@ -450,6 +576,7 @@ export class Repository {
     return this.store.query(`
       SELECT id, level, type, message, metadata, created_at AS createdAt
       FROM logs
+      WHERE agent_id = ${this.store.value(this.getActiveAgentId())}
       ORDER BY created_at DESC
       LIMIT ${Number(limit)};
     `);
@@ -475,13 +602,13 @@ export class Repository {
     const outputCount = plugins.filter((plugin) => plugin.direction === "output" && plugin.enabled).length;
     const counts = this.store.query(`
       SELECT
-        (SELECT COUNT(*) FROM input_events) AS inputEvents,
-        (SELECT COUNT(*) FROM tasks) AS tasks,
-        (SELECT COUNT(*) FROM memories) AS memories,
-        (SELECT COUNT(*) FROM output_events) AS outputEvents,
-        (SELECT COUNT(*) FROM confirmation_requests WHERE status = 'pending') AS pendingApprovals,
-        (SELECT COUNT(*) FROM schedules WHERE status = 'active') AS activeSchedules,
-        (SELECT COUNT(*) FROM logs WHERE level = 'error') AS errors;
+        (SELECT COUNT(*) FROM input_events WHERE agent_id = ${this.store.value(this.getActiveAgentId())}) AS inputEvents,
+        (SELECT COUNT(*) FROM tasks WHERE agent_id = ${this.store.value(this.getActiveAgentId())}) AS tasks,
+        (SELECT COUNT(*) FROM memories WHERE agent_id = ${this.store.value(this.getActiveAgentId())}) AS memories,
+        (SELECT COUNT(*) FROM output_events WHERE agent_id = ${this.store.value(this.getActiveAgentId())}) AS outputEvents,
+        (SELECT COUNT(*) FROM confirmation_requests WHERE agent_id = ${this.store.value(this.getActiveAgentId())} AND status = 'pending') AS pendingApprovals,
+        (SELECT COUNT(*) FROM schedules WHERE agent_id = ${this.store.value(this.getActiveAgentId())} AND status = 'active') AS activeSchedules,
+        (SELECT COUNT(*) FROM logs WHERE agent_id = ${this.store.value(this.getActiveAgentId())} AND level = 'error') AS errors;
     `)[0];
     return { plugins, inputCount, outputCount, counts };
   }

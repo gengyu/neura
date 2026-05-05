@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Neura Admin</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f7fa;
+        --surface: #ffffff;
+        --surface-soft: #f9fafb;
+        --line: #d8dee8;
+        --line-strong: #b7c0cf;
+        --text: #17202c;
+        --muted: #647084;
+        --accent: #1467c8;
+        --accent-soft: #e8f1ff;
+        --danger: #b42318;
+        --danger-soft: #fff1f0;
+        --ok: #087443;
+        --ok-soft: #ecfdf3;
+        --warn: #a15c07;
+        --warn-soft: #fff7e6;
+        --shadow: 0 18px 48px rgba(16, 24, 40, 0.14);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 14px;
+      }
+      header {
+        min-height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px 24px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--line);
+        position: sticky;
+        top: 0;
+        z-index: 4;
+      }
+      h1 { margin: 0; font-size: 18px; font-weight: 720; }
+      h2 { margin: 0; font-size: 16px; font-weight: 700; }
+      h3 { margin: 0 0 10px; font-size: 14px; font-weight: 700; }
+      main {
+        display: grid;
+        grid-template-columns: 228px minmax(0, 1fr);
+        min-height: calc(100vh - 64px);
+      }
+      nav {
+        padding: 14px;
+        border-right: 1px solid var(--line);
+        background: #fbfcfe;
+      }
+      nav button {
+        width: 100%;
+        min-height: 38px;
+        margin-bottom: 6px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--text);
+        text-align: left;
+        padding: 0 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      nav button.active {
+        background: var(--accent-soft);
+        border-color: #bdd6ff;
+        color: var(--accent);
+        font-weight: 680;
+      }
+      nav .badge { min-width: 22px; text-align: center; }
+      section { padding: 20px 24px 44px; min-width: 0; }
+      .topline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+      .view-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(150px, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .cols {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+        gap: 14px;
+        align-items: start;
+      }
+      .metric, .panel {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      .metric { padding: 14px; min-height: 86px; }
+      .metric strong { display: block; font-size: 25px; margin-top: 7px; line-height: 1.1; }
+      .panel { padding: 14px; }
+      .panel + .panel { margin-top: 12px; }
+      .muted { color: var(--muted); }
+      .small { font-size: 12px; }
+      .stack { display: grid; gap: 10px; }
+      .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: start; }
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      .toolbar input, .toolbar select { width: auto; min-width: 180px; }
+      .table-wrap {
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+      }
+      table { width: 100%; border-collapse: collapse; min-width: 760px; }
+      th, td {
+        text-align: left;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        background: #f2f5f9;
+        font-weight: 700;
+        color: #344054;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+      tr:last-child td { border-bottom: 0; }
+      tr:hover td { background: #fbfdff; }
+      input, textarea, select {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 10px;
+        font: inherit;
+        background: #fff;
+        color: var(--text);
+      }
+      input:focus, textarea:focus, select:focus {
+        outline: 2px solid rgba(20, 103, 200, 0.16);
+        border-color: var(--accent);
+      }
+      textarea { min-height: 132px; resize: vertical; }
+      .btn {
+        border: 1px solid var(--line-strong);
+        background: var(--surface);
+        color: var(--text);
+        border-radius: 6px;
+        min-height: 34px;
+        padding: 7px 10px;
+        cursor: pointer;
+        white-space: nowrap;
+        font: inherit;
+      }
+      .btn:hover { border-color: var(--accent); color: var(--accent); }
+      .btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
+      .btn.danger { color: var(--danger); border-color: #f2b8b5; background: var(--danger-soft); }
+      .btn.ghost { border-color: transparent; background: transparent; }
+      .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+      .pill, .tag, .badge {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 2px 8px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .tag { margin: 1px 4px 1px 0; }
+      .pill.ok { color: var(--ok); background: var(--ok-soft); border-color: #abefc6; }
+      .pill.bad { color: var(--danger); background: var(--danger-soft); border-color: #fecdca; }
+      .pill.warn { color: var(--warn); background: var(--warn-soft); border-color: #fedf89; }
+      .truncate {
+        max-width: 340px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .empty {
+        background: var(--surface);
+        border: 1px dashed var(--line-strong);
+        border-radius: 8px;
+        padding: 26px;
+        text-align: center;
+        color: var(--muted);
+      }
+      .drawer {
+        position: fixed;
+        inset: 0;
+        z-index: 8;
+        display: none;
+      }
+      .drawer.open { display: block; }
+      .drawer-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.34);
+      }
+      .drawer-panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: min(620px, 100%);
+        height: 100%;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        padding: 18px;
+        overflow: auto;
+      }
+      .toast {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        z-index: 10;
+        min-width: 240px;
+        max-width: 460px;
+        padding: 12px 14px;
+        border-radius: 8px;
+        background: #101828;
+        color: #fff;
+        box-shadow: var(--shadow);
+        display: none;
+      }
+      .toast.show { display: block; }
+      .toast.bad { background: var(--danger); }
+      .toast.ok { background: var(--ok); }
+      @media (max-width: 980px) {
+        main { grid-template-columns: 1fr; }
+        nav {
+          display: flex;
+          overflow-x: auto;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          position: sticky;
+          top: 64px;
+          z-index: 3;
+        }
+        nav button { min-width: 112px; margin-bottom: 0; }
+        .grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+        .cols, .form-grid { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 620px) {
+        header { align-items: flex-start; }
+        section { padding: 16px; }
+        .grid { grid-template-columns: 1fr; }
+        .row { grid-template-columns: 1fr; }
+        .toolbar input, .toolbar select { width: 100%; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <div class="topline">
+          <h1>Neura Admin</h1>
+          <span class="pill" id="runtimePill">读取中</span>
+          <span class="muted small" id="activeAgentLabel"></span>
+        </div>
+        <div class="muted small" id="refreshInfo">尚未刷新</div>
+      </div>
+      <div class="actions">
+        <select id="agentPicker" title="当前 Agent"></select>
+        <button class="btn" id="refresh">刷新</button>
+      </div>
+    </header>
+    <main>
+      <nav id="nav"></nav>
+      <section id="view"></section>
+    </main>
+    <div class="drawer" id="drawer">
+      <div class="drawer-backdrop" data-close-drawer></div>
+      <div class="drawer-panel">
+        <div class="view-head">
+          <h2 id="drawerTitle">详情</h2>
+          <button class="btn" data-close-drawer>关闭</button>
+        </div>
+        <pre id="drawerBody"></pre>
+      </div>
+    </div>
+    <div class="toast" id="toast"></div>
+    <script>
+      const tabs = [
+        ["dashboard", "总览", "home"],
+        ["input", "输入", "inputEvents"],
+        ["agents", "Agent", "agents"],
+        ["plugins", "插件", "plugins"],
+        ["memories", "记忆", "memories"],
+        ["tasks", "任务", "tasks"],
+        ["outputs", "输出", "outputEvents"],
+        ["approvals", "审批", "pendingApprovals"],
+        ["schedules", "定时", "activeSchedules"],
+        ["logs", "日志", "errors"],
+        ["tools", "工具", "tools"]
+      ];
+      let current = localStorage.getItem("neura-admin-tab") || "dashboard";
+      let lastStatus = null;
+      let lastAgents = { agents: [], activeAgent: null };
+      const nav = document.querySelector("#nav");
+      const view = document.querySelector("#view");
+      const toast = document.querySelector("#toast");
+      const agentPicker = document.querySelector("#agentPicker");
+      const drawer = document.querySelector("#drawer");
+
+      nav.addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-tab]");
+        if (!button) return;
+        current = button.dataset.tab;
+        localStorage.setItem("neura-admin-tab", current);
+        render();
+      });
+      document.querySelector("#refresh").addEventListener("click", () => render(true));
+      agentPicker.addEventListener("change", async () => {
+        if (!agentPicker.value) return;
+        await runAction(async () => api("/api/agents/active", { method: "POST", body: JSON.stringify({ id: agentPicker.value }) }), "已切换 Agent");
+        await refreshChrome();
+        await render(true);
+      });
+      drawer.addEventListener("click", (event) => {
+        if (event.target.closest("[data-close-drawer]")) closeDrawer();
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeDrawer();
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "r") {
+          event.preventDefault();
+          render(true);
+        }
+      });
+
+      async function api(path, options) {
+        const response = await fetch(path, {
+          headers: { "Content-Type": "application/json" },
+          ...options
+        });
+        if (!response.ok) throw new Error(await response.text());
+        return response.json();
+      }
+
+      async function refreshChrome() {
+        const [status, agents] = await Promise.all([api("/api/status"), api("/api/agents")]);
+        lastStatus = status;
+        lastAgents = agents;
+        renderNav(status);
+        renderHeader(status, agents);
+      }
+
+      function renderNav(status = lastStatus) {
+        const counts = status?.counts ?? {};
+        nav.innerHTML = tabs.map(([id, label, countKey]) => {
+          const count = countKey === "home" ? "" : countKey === "agents" ? lastAgents.agents.length : counts[countKey];
+          return `<button data-tab="${id}" class="${id === current ? "active" : ""}">
+            <span>${label}</span>${count === undefined || count === "" ? "" : `<span class="badge">${escapeHtml(String(count))}</span>`}
+          </button>`;
+        }).join("");
+      }
+
+      function renderHeader(status, agents) {
+        const runtime = status.runtime?.value ?? {};
+        const running = runtime.status === "running";
+        const pill = document.querySelector("#runtimePill");
+        pill.className = `pill ${running ? "ok" : "warn"}`;
+        pill.textContent = running ? "运行中" : "未运行";
+        const active = agents.activeAgent;
+        document.querySelector("#activeAgentLabel").textContent = active ? `${active.name} · ${active.id}` : "未选择 Agent";
+        document.querySelector("#refreshInfo").textContent = `刷新于 ${formatDateTime(new Date().toISOString())}`;
+        agentPicker.innerHTML = agents.agents.map((agent) => `<option value="${escapeHtml(agent.id)}">${escapeHtml(agent.name)} · ${escapeHtml(agent.id)}</option>`).join("");
+        if (active) agentPicker.value = active.id;
+      }
+
+      async function render(forceChrome = false) {
+        view.innerHTML = `<div class="empty">加载中...</div>`;
+        try {
+          if (forceChrome || !lastStatus) await refreshChrome();
+          renderNav();
+          if (current === "dashboard") await renderDashboard();
+          if (current === "input") await renderInput();
+          if (current === "agents") await renderAgents();
+          if (current === "plugins") await renderPlugins();
+          if (current === "memories") await renderMemories();
+          if (current === "tasks") await renderCollection("任务", "/api/tasks", ["id", "type", "status", "createdAt", "error"]);
+          if (current === "outputs") await renderCollection("输出", "/api/outputs", ["pluginId", "type", "status", "createdAt"]);
+          if (current === "approvals") await renderApprovals();
+          if (current === "schedules") await renderSchedules();
+          if (current === "logs") await renderCollection("日志", "/api/logs", ["level", "type", "message", "createdAt"]);
+          if (current === "tools") await renderCollection("工具调用", "/api/tools", ["toolName", "status", "riskLevel", "createdAt"]);
+        } catch (error) {
+          view.innerHTML = `<div class="panel bad"><pre>${escapeHtml(error.message)}</pre></div>`;
+          showToast(error.message, "bad");
+        }
+      }
+
+      async function renderDashboard() {
+        const config = await api("/api/config");
+        const status = lastStatus;
+        const counts = status.counts ?? {};
+        view.innerHTML = `
+          <div class="view-head">
+            <h2>总览</h2>
+            <button class="btn" id="quickReindex">重建记忆索引</button>
+          </div>
+          <div class="grid">
+            ${metric("输入事件", counts.inputEvents)}
+            ${metric("任务", counts.tasks)}
+            ${metric("记忆", counts.memories)}
+            ${metric("待审批", counts.pendingApprovals)}
+          </div>
+          <div class="cols">
+            <div class="panel">
+              <h3>模型</h3>
+              <p>${escapeHtml(config.model.provider)} / ${escapeHtml(config.model.model)}</p>
+              <p class="muted">${escapeHtml(config.model.baseUrl)}</p>
+              <span class="pill ${config.model.apiKeyConfigured ? "ok" : "bad"}">API key ${config.model.apiKeyConfigured ? "已配置" : "未配置"}</span>
+            </div>
+            <div class="panel">
+              <h3>策略</h3>
+              ${objectSummary(config.policy)}
+            </div>
+          </div>
+        `;
+        document.querySelector("#quickReindex").addEventListener("click", () => reindexMemories());
+      }
+
+      async function renderInput() {
+        view.innerHTML = `
+          <div class="view-head">
+            <h2>输入</h2>
+            <span class="muted small">Ctrl/Command + Enter 发送</span>
+          </div>
+          <div class="panel">
+            <div class="row">
+              <textarea id="inputText" placeholder="输入要交给 Neura 的内容"></textarea>
+              <button class="btn primary" id="sendInput">发送</button>
+            </div>
+          </div>
+          <div style="height:14px"></div>
+          <div id="inputResult"></div>
+        `;
+        const textarea = document.querySelector("#inputText");
+        const button = document.querySelector("#sendInput");
+        textarea.addEventListener("keydown", (event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") sendInput();
+        });
+        button.addEventListener("click", sendInput);
+
+        async function sendInput() {
+          const content = textarea.value.trim();
+          if (!content) return;
+          button.disabled = true;
+          button.textContent = "处理中";
+          try {
+            const result = await api("/api/input", { method: "POST", body: JSON.stringify({ type: "text", content }) });
+            document.querySelector("#inputResult").innerHTML = `<div class="panel"><h3>处理结果</h3><pre>${escapeHtml(JSON.stringify(result.result, null, 2))}</pre></div>`;
+            textarea.value = "";
+            await refreshChrome();
+            showToast("输入已处理", "ok");
+          } finally {
+            button.disabled = false;
+            button.textContent = "发送";
+          }
+        }
+      }
+
+      async function renderAgents() {
+        const data = await api("/api/agents");
+        lastAgents = data;
+        renderHeader(lastStatus, data);
+        view.innerHTML = `
+          <div class="view-head"><h2>Agent</h2></div>
+          <div class="cols">
+            <div>${renderTable(["id", "name", "status", "createdAt", "action"], data.agents.map((agent) => ({
+              ...agent,
+              action: agent.id === data.activeAgent?.id
+                ? `<span class="pill ok">当前</span>`
+                : `<button class="btn" data-agent-use="${escapeHtml(agent.id)}">切换</button>`
+            })))}</div>
+            <div class="panel">
+              <h3>新建 Agent</h3>
+              <div class="stack">
+                <input id="agentName" placeholder="名称" />
+                <input id="agentId" placeholder="ID，可留空" />
+                <button class="btn primary" id="createAgent">创建</button>
+              </div>
+            </div>
+          </div>
+        `;
+        view.querySelectorAll("button[data-agent-use]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            await runAction(async () => api("/api/agents/active", { method: "POST", body: JSON.stringify({ id: button.dataset.agentUse }) }), "已切换 Agent");
+            await refreshChrome();
+            renderAgents();
+          });
+        });
+        document.querySelector("#createAgent").addEventListener("click", async () => {
+          const name = document.querySelector("#agentName").value.trim();
+          const id = document.querySelector("#agentId").value.trim();
+          if (!name) return;
+          await runAction(async () => api("/api/agents", { method: "POST", body: JSON.stringify({ name, id: id || undefined }) }), "已创建 Agent");
+          await refreshChrome();
+          renderAgents();
+        });
+      }
+
+      async function renderPlugins() {
+        const rows = await api("/api/plugins");
+        view.innerHTML = `
+          <div class="view-head"><h2>插件</h2></div>
+          <div class="toolbar">
+            <select id="pluginDirection"><option value="">全部方向</option><option value="input">输入</option><option value="output">输出</option></select>
+            <select id="pluginEnabled"><option value="">全部状态</option><option value="true">已启用</option><option value="false">已禁用</option></select>
+          </div>
+          <div id="pluginTable"></div>
+        `;
+        const direction = document.querySelector("#pluginDirection");
+        const enabled = document.querySelector("#pluginEnabled");
+        const paint = () => {
+          const filtered = rows.filter((row) =>
+            (!direction.value || row.direction === direction.value) &&
+            (!enabled.value || String(Boolean(row.enabled)) === enabled.value)
+          );
+          document.querySelector("#pluginTable").innerHTML = renderTable(["id", "name", "direction", "type", "status", "enabled", "action"], filtered.map((row) => ({
+            ...row,
+            enabled: statusPill(row.enabled ? "是" : "否", row.enabled ? "ok" : "warn"),
+            status: statusPill(row.status, row.status === "error" ? "bad" : row.status === "running" ? "ok" : "warn"),
+            action: `<button class="btn" data-plugin="${escapeHtml(row.id)}" data-enabled="${row.enabled ? "false" : "true"}">${row.enabled ? "禁用" : "启用"}</button>`
+          })));
+          bindDetailButtons(filtered);
+          view.querySelectorAll("button[data-plugin]").forEach((button) => {
+            button.addEventListener("click", async () => {
+              await runAction(async () => api(`/api/plugins/${button.dataset.plugin}`, { method: "POST", body: JSON.stringify({ enabled: button.dataset.enabled === "true" }) }), "插件状态已更新");
+              await refreshChrome();
+              renderPlugins();
+            });
+          });
+        };
+        direction.addEventListener("change", paint);
+        enabled.addEventListener("change", paint);
+        paint();
+      }
+
+      async function renderMemories() {
+        view.innerHTML = `
+          <div class="view-head">
+            <h2>记忆</h2>
+            <button class="btn" id="reindexMemory">重建索引</button>
+          </div>
+          <div class="toolbar">
+            <input id="memoryQuery" placeholder="搜索记忆" />
+            <button class="btn" id="searchMemory">搜索</button>
+            <button class="btn ghost" id="clearMemorySearch">清空</button>
+          </div>
+          <div id="memoryTable"></div>
+        `;
+        const input = document.querySelector("#memoryQuery");
+        document.querySelector("#reindexMemory").addEventListener("click", () => reindexMemories());
+        document.querySelector("#searchMemory").addEventListener("click", () => load(input.value.trim()));
+        document.querySelector("#clearMemorySearch").addEventListener("click", () => { input.value = ""; load(); });
+        input.addEventListener("keydown", (event) => { if (event.key === "Enter") load(input.value.trim()); });
+        await load();
+
+        async function load(query = "") {
+          const rows = await api(`/api/memories${query ? `?query=${encodeURIComponent(query)}` : ""}`);
+          document.querySelector("#memoryTable").innerHTML = renderTable(["summary", "tags", "importance", "confidence", "vectorScore", "updatedAt"], rows.map((row) => ({
+            ...row,
+            tags: row.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join(""),
+            vectorScore: row.vectorScore === undefined ? "" : Number(row.vectorScore).toFixed(3)
+          })));
+          bindDetailButtons(rows);
+        }
+      }
+
+      async function renderApprovals() {
+        const rows = await api("/api/approvals");
+        view.innerHTML = `<div class="view-head"><h2>审批</h2></div>${renderTable(["id", "toolName", "status", "reason", "createdAt", "action"], rows.map((row) => ({
+          ...row,
+          status: statusPill(row.status, row.status === "pending" ? "warn" : row.status === "approved" ? "ok" : "bad"),
+          action: row.status === "pending"
+            ? `<button class="btn primary" data-approval="${escapeHtml(row.id)}" data-resolution="approved">批准</button> <button class="btn danger" data-approval="${escapeHtml(row.id)}" data-resolution="rejected">拒绝</button>`
+            : ""
+        })))}`;
+        bindDetailButtons(rows);
+        view.querySelectorAll("button[data-approval]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            await runAction(async () => api(`/api/approvals/${button.dataset.approval}`, { method: "POST", body: JSON.stringify({ resolution: button.dataset.resolution }) }), "审批已处理");
+            await refreshChrome();
+            renderApprovals();
+          });
+        });
+      }
+
+      async function renderSchedules() {
+        const rows = await api("/api/schedules");
+        view.innerHTML = `
+          <div class="view-head"><h2>定时任务</h2></div>
+          <div class="panel">
+            <div class="form-grid">
+              <input id="scheduleName" placeholder="名称" />
+              <select id="scheduleMode"><option value="reminder">提醒</option><option value="input">输入</option></select>
+              <input id="scheduleAt" type="datetime-local" />
+            </div>
+            <div style="height:10px"></div>
+            <div class="form-grid">
+              <select id="scheduleQuick">
+                <option value="">自选时间</option>
+                <option value="900000">15 分钟后</option>
+                <option value="3600000">1 小时后</option>
+                <option value="86400000">明天此刻</option>
+              </select>
+              <select id="scheduleRepeat">
+                <option value="">不重复</option>
+                <option value="3600000">每小时</option>
+                <option value="86400000">每天</option>
+                <option value="604800000">每周</option>
+              </select>
+              <button class="btn primary" id="addSchedule">创建</button>
+            </div>
+            <div style="height:10px"></div>
+            <textarea id="scheduleText" placeholder="内容"></textarea>
+          </div>
+          <div style="height:14px"></div>
+          ${renderTable(["name", "mode", "status", "runAt", "intervalMs", "action"], rows.map((row) => ({
+            ...row,
+            status: statusPill(row.status, row.status === "active" ? "ok" : row.status === "paused" ? "warn" : "bad"),
+            intervalMs: row.intervalMs ? formatDuration(row.intervalMs) : "",
+            action: `${row.status === "active"
+              ? `<button class="btn" data-schedule-status="${escapeHtml(row.id)}" data-status="paused">暂停</button>`
+              : `<button class="btn" data-schedule-status="${escapeHtml(row.id)}" data-status="active">恢复</button>`}
+              <button class="btn danger" data-schedule-delete="${escapeHtml(row.id)}">删除</button>`
+          })))}
+        `;
+        bindDetailButtons(rows);
+        document.querySelector("#scheduleQuick").addEventListener("change", (event) => {
+          if (!event.target.value) return;
+          document.querySelector("#scheduleAt").value = toDatetimeLocal(new Date(Date.now() + Number(event.target.value)));
+        });
+        document.querySelector("#addSchedule").addEventListener("click", async () => {
+          const localRunAt = document.querySelector("#scheduleAt").value;
+          await runAction(async () => api("/api/schedules", {
+            method: "POST",
+            body: JSON.stringify({
+              name: document.querySelector("#scheduleName").value.trim(),
+              mode: document.querySelector("#scheduleMode").value,
+              runAt: localRunAt ? new Date(localRunAt).toISOString() : "",
+              intervalMs: document.querySelector("#scheduleRepeat").value ? Number(document.querySelector("#scheduleRepeat").value) : null,
+              text: document.querySelector("#scheduleText").value.trim()
+            })
+          }), "定时任务已创建");
+          await refreshChrome();
+          renderSchedules();
+        });
+        view.querySelectorAll("button[data-schedule-status]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            await runAction(async () => api(`/api/schedules/${button.dataset.scheduleStatus}/status`, { method: "POST", body: JSON.stringify({ status: button.dataset.status }) }), "定时任务已更新");
+            await refreshChrome();
+            renderSchedules();
+          });
+        });
+        view.querySelectorAll("button[data-schedule-delete]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            await runAction(async () => api(`/api/schedules/${button.dataset.scheduleDelete}`, { method: "DELETE" }), "定时任务已删除");
+            await refreshChrome();
+            renderSchedules();
+          });
+        });
+      }
+
+      async function renderCollection(title, path, columns) {
+        const rows = await api(path);
+        view.innerHTML = `<div class="view-head"><h2>${title}</h2></div>${renderTable(columns, rows)}`;
+        bindDetailButtons(rows);
+      }
+
+      async function reindexMemories() {
+        await runAction(async () => {
+          const result = await api("/api/memories/reindex", { method: "POST" });
+          return result;
+        }, "记忆索引已重建");
+        await refreshChrome();
+      }
+
+      async function runAction(action, successMessage) {
+        try {
+          const result = await action();
+          showToast(successMessage, "ok");
+          return result;
+        } catch (error) {
+          showToast(error.message, "bad");
+          throw error;
+        }
+      }
+
+      function renderTable(columns, rows) {
+        if (!rows.length) return `<div class="empty">暂无数据</div>`;
+        const allColumns = [...columns, "__detail"];
+        return `<div class="table-wrap"><table><thead><tr>${allColumns.map((c) => `<th>${c === "__detail" ? "" : escapeHtml(c)}</th>`).join("")}</tr></thead><tbody>${rows.map((row, index) => `<tr>${allColumns.map((c) => `<td>${c === "__detail" ? `<button class="btn ghost" data-row-detail="${index}">详情</button>` : formatCell(row[c], c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      }
+
+      function bindDetailButtons(rows) {
+        view.querySelectorAll("button[data-row-detail]").forEach((button) => {
+          button.addEventListener("click", () => openDrawer(rows[Number(button.dataset.rowDetail)]));
+        });
+      }
+
+      function metric(label, value) {
+        return `<div class="metric"><span class="muted">${escapeHtml(label)}</span><strong>${escapeHtml(String(value ?? 0))}</strong></div>`;
+      }
+
+      function objectSummary(value) {
+        return Object.entries(value ?? {}).map(([key, item]) => `<p><span class="muted">${escapeHtml(key)}</span> ${statusPill(String(item), item ? "ok" : "warn")}</p>`).join("");
+      }
+
+      function statusPill(text, tone = "warn") {
+        return `<span class="pill ${tone}">${escapeHtml(text)}</span>`;
+      }
+
+      function formatCell(value, column) {
+        if (value === null || value === undefined) return "";
+        if (["action", "status", "enabled", "tags"].includes(column)) return String(value);
+        if (typeof value === "object") return `<pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
+        const string = String(value);
+        return `<div class="truncate" title="${escapeHtml(string)}">${escapeHtml(string)}</div>`;
+      }
+
+      function openDrawer(row) {
+        document.querySelector("#drawerBody").textContent = JSON.stringify(row, null, 2);
+        drawer.classList.add("open");
+      }
+
+      function closeDrawer() {
+        drawer.classList.remove("open");
+      }
+
+      function showToast(message, tone = "") {
+        toast.textContent = message;
+        toast.className = `toast show ${tone}`;
+        clearTimeout(showToast.timer);
+        showToast.timer = setTimeout(() => {
+          toast.className = "toast";
+        }, 2600);
+      }
+
+      function formatDateTime(value) {
+        if (!value) return "";
+        return new Intl.DateTimeFormat("zh-CN", {
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit"
+        }).format(new Date(value));
+      }
+
+      function formatDuration(ms) {
+        const value = Number(ms);
+        if (value % 604800000 === 0) return `${value / 604800000} 周`;
+        if (value % 86400000 === 0) return `${value / 86400000} 天`;
+        if (value % 3600000 === 0) return `${value / 3600000} 小时`;
+        if (value % 60000 === 0) return `${value / 60000} 分钟`;
+        return `${value} ms`;
+      }
+
+      function toDatetimeLocal(date) {
+        const offset = date.getTimezoneOffset() * 60000;
+        return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+      }
+
+      render(true);
+    </script>
+  </body>
+</html>

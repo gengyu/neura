@@ -63,6 +63,32 @@ const AVAILABLE_TOOLS = [
       },
       required: ["command"]
     }
+  },
+  {
+    name: "call_model",
+    description: "调用 AI 模型对子任务进行独立推理。当你需要对某段内容做二次总结、翻译、分类或深入分析时使用。",
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "发送给模型的提示词" },
+        systemMessage: { type: "string", description: "系统消息，可选。用于设定模型角色或回复风格" }
+      },
+      required: ["prompt"]
+    }
+  },
+  {
+    name: "http_request",
+    description: "发送 HTTP 请求到外部 API。用于获取实时信息、调用外部服务或触发 Webhook。",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "请求 URL" },
+        method: { type: "string", description: "HTTP 方法，默认 GET" },
+        headers: { type: "object", description: "请求头，可选" },
+        body: { type: "string", description: "请求体，可选。仅 POST/PUT/PATCH 有效" }
+      },
+      required: ["url"]
+    }
   }
 ];
 
@@ -81,6 +107,7 @@ export class AgentLoop {
     this.repository.log("info", "input", "Input event accepted", { inputEventId: inputEvent.id, type: inputEvent.type });
 
     try {
+      const contextMemories = this.repository.searchMemories(normalizeToText(inputEvent.content), 5);
       const executeTool = this.tools
         ? async (name, input) => {
             if (name === "search_memory") return this.tools.searchMemory(input.query);
@@ -88,13 +115,15 @@ export class AgentLoop {
             if (name === "write_file") return this.tools.writeFile(input.path, input.content);
             if (name === "delete_file") return this.tools.deleteFile(input.path);
             if (name === "execute_command") return this.tools.executeCommand(input.command, input.args, { cwd: input.cwd });
+            if (name === "call_model") return this.tools.callModel(input.prompt, input.systemMessage);
+            if (name === "http_request") return this.tools.httpRequest(input.url, input.method, input.headers ?? {}, input.body ?? null);
             throw new Error(`Unknown tool: ${name}`);
           }
         : undefined;
 
       const analysis = await this.modelProvider.analyzeInput(
         inputEvent,
-        {},
+        { relatedMemories: contextMemories },
         { tools: this.tools ? AVAILABLE_TOOLS : [], executeTool }
       );
 

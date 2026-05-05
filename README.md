@@ -13,11 +13,14 @@ Neura 是一个无 UI 优先、长期运行的个人智能体运行时原型。
 - 模型推理抽象，支持 DeepSeek OpenAI-compatible 和 Anthropic-compatible 入口
 - 摘要与标签生成
 - 长期记忆判断、写入、相似记忆更新
+- 向量化记忆检索与记忆索引重建
 - SQLite 本地存储
 - CLI 输出插件
 - 系统通知输出插件
+- 前端管理插件，支持 Agent、插件、记忆、审批和定时任务管理
 - 高风险操作审批流
 - 定时提醒与周期输入调度
+- 多 Agent 数据隔离与切换
 - 插件状态查看
 - 运行时状态与日志
 
@@ -29,6 +32,10 @@ npm run neura -- input "我想做一个常驻运行的智能体"
 npm run neura -- input-image ./data/screenshots/demo.png
 npm run neura -- memory list
 npm run neura -- memory search "智能体"
+npm run neura -- memory reindex
+npm run neura -- agents list
+npm run neura -- agents create "Research Agent" --id research-agent
+npm run neura -- agents use research-agent
 npm run neura -- plugins list
 npm run neura -- inputs list
 npm run neura -- tasks list
@@ -88,9 +95,11 @@ npm run neura -- stop
 - `fastify` 处理 Webhook HTTP 服务
 - `chokidar` 处理文件夹监听
 - `dotenv` 处理本地环境变量
-- `node:sqlite` 处理 SQLite 存储，避免 shell 调用和手写数据库驱动
+- `better-sqlite3` 处理 SQLite 存储，pnpm 仅允许它执行 native build script
 
-Agent Loop 会先拿到统一的分析结果：
+Agent Loop 会先用本地向量索引检索相关记忆，并把 `relatedMemories` 作为模型上下文传入。模型仍可继续调用 `search_memory` 工具补充上下文，但已有相关记忆时不会重复进行硬性检索。
+
+Agent Loop 会拿到统一的分析结果：
 
 - 摘要
 - 标签
@@ -102,6 +111,8 @@ Agent Loop 会先拿到统一的分析结果：
 当输入为图片时，provider 会把图片文件连同文字上下文一起发送给模型做分析。
 
 写入记忆前，Neura 会搜索相似记忆。重复或高度相似的输入会更新已有记忆，而不是不断新增。
+
+记忆检索使用 `natural` 做分词/词干处理，并通过 `cosine-similarity` 对本地哈希向量排序；如果没有命中，再退回 SQLite LIKE 检索。
 
 ## Webhook 输入
 
@@ -115,6 +126,17 @@ curl -X POST http://127.0.0.1:8787/input \
 ```
 
 受限沙箱可能不允许监听端口；这种情况下插件会被标记为 `error`，Runtime 会继续运行。
+
+## 前端管理
+
+启动 Runtime 后，打开本地管理界面：
+
+```bash
+npm run neura -- start
+open http://127.0.0.1:8790
+```
+
+管理界面由 `admin-ui-output` 插件提供，可以查看状态、切换/创建 Agent、提交输入、启停插件、搜索记忆、重建记忆索引、处理审批、创建定时任务，并查看输入、任务、输出、日志和工具调用详情。
 
 ## 文件夹监听
 

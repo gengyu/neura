@@ -3,9 +3,10 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 export class ToolRegistry {
-  constructor({ repository, policy }) {
+  constructor({ repository, policy, modelProvider }) {
     this.repository = repository;
     this.policy = policy;
+    this.modelProvider = modelProvider;
   }
 
   searchMemory(query) {
@@ -60,6 +61,60 @@ export class ToolRegistry {
         encoding: "utf8"
       });
       return { command, args, cwd: options.cwd ?? process.cwd(), output };
+    });
+  }
+
+  async callModel(prompt, systemMessage = "You are a helpful assistant. Respond concisely in the same language as the user.") {
+    return this.record("call_model", { prompt, systemMessage }, "low", async () => {
+      if (!this.modelProvider) throw new Error("Model provider not available for call_model tool");
+      if (this.modelProvider.client?.beta?.chat?.completions?.parse) {
+        const completion = await this.modelProvider.client.chat.completions.create({
+          model: this.modelProvider.model,
+          temperature: 0.3,
+          messages: [
+            { role: "system", content: systemMessage },
+            { role: "user", content: prompt }
+          ]
+        });
+        return { content: completion.choices[0]?.message?.content ?? "" };
+      }
+      if (this.modelProvider.client?.messages?.create) {
+        const message = await this.modelProvider.client.messages.create({
+          model: this.modelProvider.model,
+          max_tokens: 800,
+          temperature: 0.3,
+          system: systemMessage,
+          messages: [{ role: "user", content: prompt }]
+        });
+        const textBlock = message.content.find((part) => part.type === "text");
+        return { content: textBlock?.text ?? "" };
+      }
+      throw new Error("No compatible model client available for call_model");
+    });
+  }
+
+  async httpRequest(url, method = "GET", headers = {}, body = null) {
+    return this.record("http_request", { url, method, headers, body }, "medium", async () => {
+      this.policy.assertNetworkAllowed(url);
+      const options = {
+        method: method.toUpperCase(),
+        headers: { "User-Agent": "Neura/0.1", ...headers }
+      };
+      if (body !== null && !["GET", "HEAD"].includes(options.method)) {
+        options.body = typeof body === "string" ? body : JSON.stringify(body);
+        if (!options.headers["Content-Type"] && !options.headers["content-type"]) {
+          options.headers["Content-Type"] = "application/json";
+        }
+      }
+      const response = await fetch(url, options);
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text;
+      }
+      return { status: response.status, headers: Object.fromEntries(response.headers), data };
     });
   }
 
@@ -126,9 +181,9 @@ export class ToolRegistry {
     return resolved;
   }
 
-  record(toolName, input, riskLevel, fn) {
+  async record(toolName, input, riskLevel, fn) {
     try {
-      const output = fn();
+      const output = await fn();
       const status = output?.confirmationRequired ? "pending_confirmation" : "completed";
       this.repository.createToolCall({ toolName, input, output, status, riskLevel });
       return output;
