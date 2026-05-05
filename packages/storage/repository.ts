@@ -1,9 +1,9 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { createId, nowIso } from "../shared/id.js";
-import { INPUT_STATUSES, TASK_STATUSES } from "../shared/types.js";
-import { similarityScore } from "../memory/memory.js";
-import { createMemoryVector, scoreMemoryVector } from "../memory/vector.js";
+import { createId, nowIso } from "../shared/id.ts";
+import { INPUT_STATUSES, TASK_STATUSES } from "../shared/types.ts";
+import { similarityScore } from "../memory/memory.ts";
+import { createMemoryVector, scoreMemoryVector } from "../memory/vector.ts";
 
 export class Repository {
   constructor(store) {

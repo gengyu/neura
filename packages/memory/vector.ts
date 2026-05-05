@@ -1,6 +1,6 @@
 import cosineSimilarity from "cosine-similarity";
 import natural from "natural";
-import { normalizeToText } from "./memory.js";
+import { normalizeToText } from "./memory.ts";
 
 const tokenizer = new natural.WordTokenizer();
 const DIMENSIONS = 384;

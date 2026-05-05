@@ -3,10 +3,10 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 export class ToolRegistry {
-  constructor({ repository, policy, modelProvider }) {
+  constructor({ repository, policy, getModelProvider }) {
     this.repository = repository;
     this.policy = policy;
-    this.modelProvider = modelProvider;
+    this.getModelProvider = getModelProvider;
   }
 
   searchMemory(query) {
@@ -66,10 +66,14 @@ export class ToolRegistry {
 
   async callModel(prompt, systemMessage = "You are a helpful assistant. Respond concisely in the same language as the user.") {
     return this.record("call_model", { prompt, systemMessage }, "low", async () => {
-      if (!this.modelProvider) throw new Error("Model provider not available for call_model tool");
-      if (this.modelProvider.client?.beta?.chat?.completions?.parse) {
-        const completion = await this.modelProvider.client.chat.completions.create({
-          model: this.modelProvider.model,
+      const modelProvider = this.getModelProvider?.();
+      if (!modelProvider) throw new Error("Model provider not available for call_model tool");
+      if (typeof modelProvider.callModel === "function") {
+        return modelProvider.callModel(prompt, systemMessage);
+      }
+      if (modelProvider.client?.beta?.chat?.completions?.parse) {
+        const completion = await modelProvider.client.chat.completions.create({
+          model: modelProvider.model,
           temperature: 0.3,
           messages: [
             { role: "system", content: systemMessage },
@@ -78,9 +82,9 @@ export class ToolRegistry {
         });
         return { content: completion.choices[0]?.message?.content ?? "" };
       }
-      if (this.modelProvider.client?.messages?.create) {
-        const message = await this.modelProvider.client.messages.create({
-          model: this.modelProvider.model,
+      if (modelProvider.client?.messages?.create) {
+        const message = await modelProvider.client.messages.create({
+          model: modelProvider.model,
           max_tokens: 800,
           temperature: 0.3,
           system: systemMessage,

@@ -4,7 +4,7 @@ export default {
     name: "Neura"
   },
   storage: {
-    databasePath: "data/neura.db"
+    databasePath: process.env.NEURA_DATABASE_PATH || "data/neura.db"
   },
   runtime: {
     heartbeatIntervalMs: 5000,
@@ -16,7 +16,7 @@ export default {
     folderWatch: {
       enabled: true,
       path: "data/inbox",
-      extensions: [".txt", ".md", ".json", ".png", ".jpg", ".jpeg", ".webp"]
+      extensions: [".txt", ".md", ".json", ".js", ".ts", ".jsx", ".tsx", ".pdf", ".png", ".jpg", ".jpeg", ".webp"]
     },
     screenshotWatch: {
       enabled: true,

@@ -24,34 +24,40 @@ Neura 是一个无 UI 优先、长期运行的个人智能体运行时原型。
 - 插件状态查看
 - 运行时状态与日志
 
+当前代码栈已收敛为：
+
+- TypeScript
+- Bun Runtime
+- `bun:sqlite` 本地存储
+
 ## 使用
 
 ```bash
-npm run neura -- status
-npm run neura -- input "我想做一个常驻运行的智能体"
-npm run neura -- input-image ./data/screenshots/demo.png
-npm run neura -- memory list
-npm run neura -- memory search "智能体"
-npm run neura -- memory reindex
-npm run neura -- agents list
-npm run neura -- agents create "Research Agent" --id research-agent
-npm run neura -- agents use research-agent
-npm run neura -- plugins list
-npm run neura -- inputs list
-npm run neura -- tasks list
-npm run neura -- tools list
-npm run neura -- approvals list
-npm run neura -- schedules add --mode reminder --in 10m "十分钟后提醒我回来看 Neura"
-npm run neura -- schedules list
-npm run neura -- config
+bun run neura -- status
+bun run neura -- input "我想做一个常驻运行的智能体"
+bun run neura -- input-image ./data/screenshots/demo.png
+bun run neura -- memory list
+bun run neura -- memory search "智能体"
+bun run neura -- memory reindex
+bun run neura -- agents list
+bun run neura -- agents create "Research Agent" --id research-agent
+bun run neura -- agents use research-agent
+bun run neura -- plugins list
+bun run neura -- inputs list
+bun run neura -- tasks list
+bun run neura -- tools list
+bun run neura -- approvals list
+bun run neura -- schedules add --mode reminder --in 10m "十分钟后提醒我回来看 Neura"
+bun run neura -- schedules list
+bun run neura -- config
 ```
 
 也可以启动常驻运行时：
 
 ```bash
-npm run neura -- start
-npm run neura -- status
-npm run neura -- stop
+bun run start
+bun run status
+bun run stop
 ```
 
 ## 数据
@@ -81,7 +87,12 @@ npm run neura -- stop
 - 默认模型：`deepseek-chat`
 - API key 环境变量：`DEEPSEEK_API_KEY`
 
-如果没有配置 API key，真实模型调用会直接失败；测试和运行时都会暴露这个问题。
+为了让验收不依赖外网，项目也内置了 `mock` provider：
+
+- `bun test` 默认走 `NEURA_MODEL_PROVIDER=mock`
+- 真实运行时仍然可以继续使用 `.env` 中配置的 DeepSeek / OpenAI-compatible / Anthropic-compatible API
+
+如果没有配置 API key，只有在真正处理需要模型推理的输入时才会失败；状态查看、插件查看等非推理命令不再被模型初始化阻塞。
 
 模型接入使用官方/开源 SDK：
 
@@ -95,7 +106,7 @@ npm run neura -- stop
 - `fastify` 处理 Webhook HTTP 服务
 - `chokidar` 处理文件夹监听
 - `dotenv` 处理本地环境变量
-- `better-sqlite3` 处理 SQLite 存储，pnpm 仅允许它执行 native build script
+- `bun:sqlite` 处理 SQLite 存储
 
 Agent Loop 会先用本地向量索引检索相关记忆，并把 `relatedMemories` 作为模型上下文传入。模型仍可继续调用 `search_memory` 工具补充上下文，但已有相关记忆时不会重复进行硬性检索。
 
@@ -119,7 +130,7 @@ Agent Loop 会拿到统一的分析结果：
 启动 Runtime 后，可以向本地 Webhook 发送输入：
 
 ```bash
-npm run neura -- start
+bun run start
 curl -X POST http://127.0.0.1:8787/input \
   -H 'Content-Type: application/json' \
   -d '{"type":"text","content":"这是一条来自 Webhook 的输入"}'
@@ -132,7 +143,7 @@ curl -X POST http://127.0.0.1:8787/input \
 启动 Runtime 后，打开本地管理界面：
 
 ```bash
-npm run neura -- start
+bun run start
 open http://127.0.0.1:8790
 ```
 
@@ -140,7 +151,7 @@ open http://127.0.0.1:8790
 
 ## 文件夹监听
 
-启动 Runtime 后，把 `.txt`、`.md`、`.json`、图片文件放入 `data/inbox/`，Neura 会自动处理。
+启动 Runtime 后，把 `.txt`、`.md`、`.json`、`.js`、`.ts`、`.pdf` 和图片文件放入 `data/inbox/`，Neura 会自动处理。
 
 ## 截图监听
 
@@ -151,9 +162,9 @@ open http://127.0.0.1:8790
 当模型尝试执行命令、删除文件或覆盖已有文件时，Neura 会先创建待审批请求：
 
 ```bash
-npm run neura -- approvals list
-npm run neura -- approvals approve <requestId>
-npm run neura -- approvals reject <requestId>
+bun run neura -- approvals list
+bun run neura -- approvals approve <requestId>
+bun run neura -- approvals reject <requestId>
 ```
 
 ## 定时任务
@@ -161,7 +172,7 @@ npm run neura -- approvals reject <requestId>
 Neura 支持一次性提醒和周期性输入：
 
 ```bash
-npm run neura -- schedules add --mode reminder --in 30m "提醒我整理今天的设计结论"
-npm run neura -- schedules add --mode input --every 1d --at 2026-05-06T09:00:00+08:00 "检查昨天新增的截图和网页收藏"
-npm run neura -- schedules list
+bun run neura -- schedules add --mode reminder --in 30m "提醒我整理今天的设计结论"
+bun run neura -- schedules add --mode input --every 1d --at 2026-05-06T09:00:00+08:00 "检查昨天新增的截图和网页收藏"
+bun run neura -- schedules list
 ```

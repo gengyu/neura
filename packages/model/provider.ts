@@ -301,13 +301,48 @@ export class DeepSeekAnthropicModelProvider extends AnthropicCompatibleModelProv
 
 export function createModelProvider(config = {}) {
   const provider = process.env.NEURA_MODEL_PROVIDER || config.provider;
-  if (!provider) throw new Error("Model provider not configured. Set NEURA_MODEL_PROVIDER or configure model.provider in neura.config.js");
+  if (!provider) throw new Error("Model provider not configured. Set NEURA_MODEL_PROVIDER or configure model.provider in neura.config.ts");
   const mergedConfig = { ...config, provider };
+  if (provider === "mock") return new MockModelProvider(mergedConfig);
   if (provider === "deepseek") return new DeepSeekModelProvider(mergedConfig);
   if (provider === "openai-compatible") return new OpenAICompatibleModelProvider(mergedConfig);
   if (provider === "anthropic-compatible") return new AnthropicCompatibleModelProvider(mergedConfig);
   if (provider === "deepseek-anthropic") return new DeepSeekAnthropicModelProvider(mergedConfig);
   throw new Error(`Unsupported model provider: ${provider}`);
+}
+
+export class MockModelProvider {
+  constructor(options = {}) {
+    this.id = options.id ?? options.provider ?? "mock";
+    this.model = options.model ?? "mock-neura-analyzer";
+    this.client = null;
+  }
+
+  async analyzeInput(inputEvent, context = {}) {
+    const contentText = normalizeMockInput(inputEvent.content);
+    const relatedMemories = context.relatedMemories ?? [];
+    const tags = buildMockTags(contentText, inputEvent.type);
+    const remembered = contentText.trim().length > 0;
+    const shouldOutput = inputEvent.pluginId === "cli-input" || inputEvent.pluginId === "admin-ui-output";
+
+    return normalizeAnalysis(
+      {
+        provider: this.id,
+        summary: buildMockSummary(contentText, inputEvent.type),
+        tags,
+        remembered,
+        importance: scoreImportance(contentText),
+        confidence: 0.98,
+        shouldOutput,
+        outputType: inputEvent.type === "image" ? "image_summary" : "summary"
+      },
+      { relatedMemories }
+    );
+  }
+
+  async callModel(prompt) {
+    return { content: `Mock model response: ${String(prompt).slice(0, 160)}` };
+  }
 }
 
 function toOpenAITool(tool) {
@@ -392,6 +427,38 @@ function normalizeAnalysis(candidate, extras = {}) {
 
 function trimTrailingSlash(value = "") {
   return String(value).replace(/\/+$/, "");
+}
+
+function normalizeMockInput(content) {
+  if (typeof content === "string") return content;
+  if (content?.note || content?.text) return [content.note, content.text].filter(Boolean).join(" ").trim();
+  if (content?.path) return `file:${content.path}`;
+  return JSON.stringify(content, null, 2);
+}
+
+function buildMockSummary(contentText, inputType) {
+  const trimmed = contentText.trim();
+  if (!trimmed) return "空输入，未生成有效摘要。";
+  if (inputType === "image") return `已分析图片输入：${trimmed.slice(0, 80)}`;
+  if (trimmed.length <= 80) return trimmed;
+  return `${trimmed.slice(0, 80)}...`;
+}
+
+function buildMockTags(contentText, inputType) {
+  const tags = new Set(["mock"]);
+  if (inputType) tags.add(inputType);
+  if (/[A-Za-z]/.test(contentText)) tags.add("english");
+  if (/[\u4e00-\u9fff]/.test(contentText)) tags.add("中文");
+  if (/插件|plugin/i.test(contentText)) tags.add("插件");
+  if (/记忆|memory/i.test(contentText)) tags.add("记忆");
+  if (/智能体|agent/i.test(contentText)) tags.add("智能体");
+  return [...tags].slice(0, 8);
+}
+
+function scoreImportance(contentText) {
+  if (contentText.length > 200) return 4;
+  if (contentText.length > 60) return 3;
+  return 2;
 }
 
 function formatContent(content) {

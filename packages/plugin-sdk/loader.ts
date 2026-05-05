@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -18,7 +18,8 @@ export async function loadPlugins() {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const pluginPath = resolve(dir, entry.name, "plugin.js");
+      const pluginPath = resolvePluginPath(dir, entry.name);
+      if (!pluginPath) continue;
       try {
         const mod = await import(pathToFileURL(pluginPath).href);
         const plugin = mod.default;
@@ -32,4 +33,12 @@ export async function loadPlugins() {
   }
 
   return plugins;
+}
+
+function resolvePluginPath(dir, name) {
+  for (const filename of ["plugin.ts", "plugin.js"]) {
+    const pluginPath = resolve(dir, name, filename);
+    if (existsSync(pluginPath)) return pluginPath;
+  }
+  return null;
 }

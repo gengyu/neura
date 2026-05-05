@@ -1,12 +1,12 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { createRuntime } from "../../packages/core/runtime.js";
+import { createRuntime } from "../../packages/core/runtime.ts";
 
 const runtime = await createRuntime();
 const stopRequestPath = resolve("data/neura.stop");
 
 await runtime.markRunning(process.pid);
-const pluginCleanups = await runtime.initPlugins();
+const stopPlugins = await runtime.initPlugins();
 
 const interval = setInterval(async () => {
   try {
@@ -26,15 +26,7 @@ const interval = setInterval(async () => {
 
 async function shutdown(signal) {
   clearInterval(interval);
-  for (const cleanup of pluginCleanups) {
-    try {
-      await cleanup();
-    } catch (error) {
-      runtime.repository.log("error", "runtime", "Plugin cleanup failed", {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
+  await stopPlugins();
   runtime.markStopped(signal);
   process.exit(0);
 }

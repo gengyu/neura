@@ -1,5 +1,5 @@
-import { INPUT_STATUSES, TASK_STATUSES } from "../shared/types.js";
-import { normalizeToText } from "../memory/memory.js";
+import { INPUT_STATUSES, TASK_STATUSES } from "../shared/types.ts";
+import { normalizeToText } from "../memory/memory.ts";
 
 const AVAILABLE_TOOLS = [
   {
@@ -93,10 +93,10 @@ const AVAILABLE_TOOLS = [
 ];
 
 export class AgentLoop {
-  constructor({ repository, policy, modelProvider, tools, outputDispatcher }) {
+  constructor({ repository, policy, getModelProvider, tools, outputDispatcher }) {
     this.repository = repository;
     this.policy = policy;
-    this.modelProvider = modelProvider;
+    this.getModelProvider = getModelProvider;
     this.tools = tools;
     this.outputDispatcher = outputDispatcher;
   }
@@ -107,6 +107,7 @@ export class AgentLoop {
     this.repository.log("info", "input", "Input event accepted", { inputEventId: inputEvent.id, type: inputEvent.type });
 
     try {
+      const modelProvider = this.getModelProvider();
       const contextMemories = this.repository.searchMemories(normalizeToText(inputEvent.content), 5);
       const executeTool = this.tools
         ? async (name, input) => {
@@ -121,7 +122,7 @@ export class AgentLoop {
           }
         : undefined;
 
-      const analysis = await this.modelProvider.analyzeInput(
+      const analysis = await modelProvider.analyzeInput(
         inputEvent,
         { relatedMemories: contextMemories },
         { tools: this.tools ? AVAILABLE_TOOLS : [], executeTool }

@@ -1,6 +1,10 @@
 export class OutputDispatcher {
   constructor({ repository, plugins }) {
     this.repository = repository;
+    this.setPlugins(plugins);
+  }
+
+  setPlugins(plugins) {
     this.plugins = plugins.filter((plugin) => plugin.direction === "output" && plugin._enabled);
   }
 

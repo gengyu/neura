@@ -1,15 +1,15 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { Command } from "commander";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRuntime } from "../packages/core/runtime.js";
+import { createRuntime } from "../packages/core/runtime.ts";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const pidFile = resolve(root, "data/neura.pid");
 const stopRequestFile = resolve(root, "data/neura.stop");
-const daemonPath = resolve(root, "apps/daemon/daemon.js");
+const daemonPath = resolve(root, "apps/daemon/daemon.ts");
 
 const program = new Command();
 
@@ -109,6 +109,7 @@ function start() {
   if (existsSync(stopRequestFile)) unlinkSync(stopRequestFile);
 
   const child = spawn(process.execPath, [daemonPath], {
+    env: process.env,
     cwd: root,
     detached: true,
     stdio: "ignore"
@@ -322,7 +323,7 @@ async function listPlugins() {
 
 async function setPluginEnabled(pluginId, enabled) {
   const runtime = await createRuntime();
-  runtime.repository.setPluginEnabled(pluginId, enabled);
+  await runtime.setPluginEnabled(pluginId, enabled);
   console.log(`${pluginId} 已${enabled ? "启用" : "禁用"}`);
 }
 

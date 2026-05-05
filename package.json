@@ -4,22 +4,21 @@
   "description": "A UI-less personal agent runtime.",
   "type": "module",
   "bin": {
-    "neura": "./bin/neura.js"
+    "neura": "./bin/neura.ts"
   },
   "scripts": {
-    "neura": "node ./bin/neura.js",
-    "start": "node ./bin/neura.js start",
-    "stop": "node ./bin/neura.js stop",
-    "status": "node ./bin/neura.js status",
-    "check": "node --check bin/neura.js && node --check apps/daemon/daemon.js && node --check packages/core/agent-loop.js && node --check packages/core/output-dispatcher.js && node --check packages/core/runtime.js && node --check packages/core/schedule-manager.js && node --check packages/memory/memory.js && node --check packages/memory/vector.js && node --check packages/model/provider.js && node --check packages/plugin-sdk/loader.js && node --check packages/plugin-sdk/registry.js && node --check packages/policy/policy.js && node --check packages/shared/env.js && node --check packages/shared/id.js && node --check packages/shared/types.js && node --check packages/storage/repository.js && node --check packages/storage/sqlite.js && node --check packages/tools/tools.js && node --check plugins/inputs/cli-input/plugin.js && node --check plugins/inputs/folder-watch-input/plugin.js && node --check plugins/inputs/screenshot-watch-input/plugin.js && node --check plugins/inputs/webhook-input/plugin.js && node --check plugins/outputs/admin-ui-output/plugin.js && node --check plugins/outputs/cli-output/plugin.js && node --check plugins/outputs/file-output/plugin.js && node --check plugins/outputs/system-notification-output/plugin.js",
-    "test": "node ./scripts/smoke-test.js"
+    "neura": "bun ./bin/neura.ts",
+    "start": "bun ./bin/neura.ts start",
+    "stop": "bun ./bin/neura.ts stop",
+    "status": "bun ./bin/neura.ts status",
+    "check": "bun ./bin/neura.ts status",
+    "test": "NEURA_MODEL_PROVIDER=mock bun ./scripts/smoke-test.ts"
   },
   "engines": {
-    "node": ">=20"
+    "bun": ">=1.3.13"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",
-    "better-sqlite3": "^12.9.0",
     "chokidar": "^5.0.0",
     "commander": "^14.0.3",
     "cosine-similarity": "^1.0.1",
@@ -29,9 +28,8 @@
     "openai": "^6.35.0",
     "zod": "^4.4.2"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3"
-    ]
+  "devDependencies": {
+    "@types/node": "^24.9.2",
+    "typescript": "^5.9.3"
   }
 }

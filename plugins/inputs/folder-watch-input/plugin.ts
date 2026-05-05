@@ -13,7 +13,9 @@ export default {
     if (!options?.enabled) return null;
 
     const inboxPath = resolve(options.path);
-    const extensions = new Set(options.extensions ?? [".txt", ".md", ".json", ".png", ".jpg", ".jpeg", ".webp"]);
+    const extensions = new Set(
+      options.extensions ?? [".txt", ".md", ".json", ".js", ".ts", ".jsx", ".tsx", ".pdf", ".png", ".jpg", ".jpeg", ".webp"]
+    );
     mkdirSync(inboxPath, { recursive: true });
 
     const watcher = chokidar.watch(inboxPath, {
@@ -29,8 +31,7 @@ export default {
       if (!extensions.has(extension)) return;
       try {
         const imageInput = toImageInput(filePath, extension);
-        const raw = imageInput ? null : readFileSync(filePath, "utf8");
-        const content = imageInput ?? (extension === ".json" ? safeJson(raw) : raw);
+        const content = imageInput ?? toFileInput(filePath, extension);
         await runtime.input(content, {
           pluginId: "folder-watch-input",
           type: imageInput ? "image" : "file",
@@ -79,9 +80,36 @@ function toImageInput(filePath, extension) {
   };
 }
 
+function toFileInput(filePath, extension) {
+  if (extension === ".pdf") {
+    return {
+      path: filePath,
+      extension,
+      kind: "binary-document",
+      text: null,
+      summaryHint: "PDF file detected from inbox"
+    };
+  }
+
+  const raw = readFileSync(filePath, "utf8");
+  return {
+    path: filePath,
+    extension,
+    kind: detectTextKind(extension),
+    text: extension === ".json" ? JSON.stringify(safeJson(raw), null, 2) : raw
+  };
+}
+
 function imageMimeType(extension) {
   if (extension === ".png") return "image/png";
   if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
   if (extension === ".webp") return "image/webp";
   return null;
+}
+
+function detectTextKind(extension) {
+  if (extension === ".md") return "markdown";
+  if (extension === ".json") return "json";
+  if ([".js", ".ts", ".jsx", ".tsx"].includes(extension)) return "code";
+  return "text";
 }

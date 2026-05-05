@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
@@ -6,9 +6,9 @@ export class SQLiteStore {
   constructor(databasePath) {
     this.databasePath = resolve(databasePath);
     mkdirSync(dirname(this.databasePath), { recursive: true });
-    this.db = new Database(this.databasePath);
-    this.db.pragma("journal_mode = WAL");
-    this.quoteStatement = this.db.prepare("SELECT quote(?) AS value");
+    this.db = new Database(this.databasePath, { create: true });
+    this.db.exec("PRAGMA journal_mode = WAL;");
+    this.quoteStatement = this.db.query("SELECT quote(?) AS value");
   }
 
   run(sql) {
@@ -16,7 +16,7 @@ export class SQLiteStore {
   }
 
   query(sql) {
-    return this.db.prepare(sql).all();
+    return this.db.query(sql).all();
   }
 
   value(value) {
@@ -159,7 +159,7 @@ export class SQLiteStore {
   }
 
   ensureColumn(table, column, definition) {
-    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all();
+    const columns = this.db.query(`PRAGMA table_info(${table})`).all();
     if (!columns.some((item) => item.name === column)) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
     }

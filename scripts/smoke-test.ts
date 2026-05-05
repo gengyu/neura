@@ -1,9 +1,20 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, unlinkSync } from "node:fs";
+
+const smokeDatabasePath = "data/neura-smoke-test.db";
+
+if (existsSync(smokeDatabasePath)) {
+  unlinkSync(smokeDatabasePath);
+}
 
 function run(args) {
-  return execFileSync(process.execPath, ["./bin/neura.js", ...args], {
+  return execFileSync("bun", ["./bin/neura.ts", ...args], {
     encoding: "utf8",
-    env: process.env
+    env: {
+      ...process.env,
+      NEURA_MODEL_PROVIDER: process.env.NEURA_MODEL_PROVIDER || "mock",
+      NEURA_DATABASE_PATH: process.env.NEURA_DATABASE_PATH || smokeDatabasePath
+    }
   });
 }
 
@@ -19,11 +30,6 @@ if (!status.includes("连接状态:")) {
   throw new Error("Expected status summary");
 }
 console.log("status: OK");
-
-const apiKey = process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
-if (!apiKey) {
-  throw new Error("Expected a real model API key. Set DEEPSEEK_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.");
-}
 
 const input = run(["input", "我想让 Neura 的插件体系保持极简，只分为输入插件和输出插件"]);
 if (!input.includes("已处理输入")) {

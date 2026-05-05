@@ -1,16 +1,16 @@
 import { resolve } from "node:path";
-import config from "../../neura.config.js";
-import { PermissionPolicy } from "../policy/policy.js";
-import { loadPlugins } from "../plugin-sdk/loader.js";
-import { Repository } from "../storage/repository.js";
-import { SQLiteStore } from "../storage/sqlite.js";
-import { RUNTIME_STATUSES } from "../shared/types.js";
-import { loadLocalEnv } from "../shared/env.js";
-import { createModelProvider } from "../model/provider.js";
-import { ToolRegistry } from "../tools/tools.js";
-import { AgentLoop } from "./agent-loop.js";
-import { OutputDispatcher } from "./output-dispatcher.js";
-import { ScheduleManager } from "./schedule-manager.js";
+import config from "../../neura.config.ts";
+import { PermissionPolicy } from "../policy/policy.ts";
+import { loadPlugins } from "../plugin-sdk/loader.ts";
+import { Repository } from "../storage/repository.ts";
+import { SQLiteStore } from "../storage/sqlite.ts";
+import { RUNTIME_STATUSES } from "../shared/types.ts";
+import { loadLocalEnv } from "../shared/env.ts";
+import { createModelProvider } from "../model/provider.ts";
+import { ToolRegistry } from "../tools/tools.ts";
+import { AgentLoop } from "./agent-loop.ts";
+import { OutputDispatcher } from "./output-dispatcher.ts";
+import { ScheduleManager } from "./schedule-manager.ts";
 
 async function initializePlugins(repository, configPlugins) {
   const loaded = await loadPlugins();
@@ -47,14 +47,22 @@ export async function createRuntime() {
   const loadedPlugins = await initializePlugins(repository, config.plugins);
 
   const policy = new PermissionPolicy(config.policy);
-  const modelProvider = createModelProvider(config.model);
-  const tools = new ToolRegistry({ repository, policy, modelProvider });
+  let modelProvider = null;
+  const getModelProvider = () => {
+    if (!modelProvider) {
+      modelProvider = createModelProvider(config.model);
+    }
+    return modelProvider;
+  };
+  const tools = new ToolRegistry({ repository, policy, getModelProvider });
   const outputDispatcher = new OutputDispatcher({ repository, plugins: loadedPlugins });
+  const pluginCleanups = new Map();
+  const pluginMap = new Map(loadedPlugins.map((plugin) => [plugin.id, plugin]));
   let runtime;
   const agentLoop = new AgentLoop({
     repository,
     policy,
-    modelProvider,
+    getModelProvider,
     tools,
     outputDispatcher: (event) => outputDispatcher.send(event)
   });
@@ -75,6 +83,8 @@ export async function createRuntime() {
     outputDispatcher,
     scheduleManager,
     loadedPlugins,
+    pluginMap,
+    pluginCleanups,
 
     async input(content, options = {}) {
       const pluginId = options.pluginId ?? "cli-input";
@@ -91,23 +101,81 @@ export async function createRuntime() {
     },
 
     async initPlugins() {
-      const cleanupFns = [];
       for (const plugin of loadedPlugins) {
-        if (plugin._enabled && typeof plugin.init === "function") {
+        if (plugin._enabled) {
           try {
-            const cleanup = await plugin.init(runtime);
-            if (typeof cleanup === "function") {
-              cleanupFns.push(cleanup);
-            }
-          } catch (error) {
-            repository.setPluginStatus(plugin.id, "error");
-            repository.log("error", "runtime", `Failed to init plugin ${plugin.id}`, {
-              error: error instanceof Error ? error.message : String(error)
-            });
+            await runtime.startPlugin(plugin.id);
+          } catch {
+            // Keep the runtime alive even if one plugin fails to initialize.
           }
         }
       }
-      return cleanupFns;
+      return async () => {
+        for (const pluginId of [...pluginCleanups.keys()]) {
+          await runtime.stopPlugin(pluginId);
+        }
+      };
+    },
+
+    async startPlugin(pluginId) {
+      const plugin = pluginMap.get(pluginId);
+      if (!plugin) throw new Error(`Plugin not found: ${pluginId}`);
+      if (pluginCleanups.has(pluginId)) return false;
+      if (typeof plugin.init !== "function") {
+        repository.setPluginStatus(pluginId, "enabled");
+        return true;
+      }
+
+      try {
+        const cleanup = await plugin.init(runtime);
+        if (typeof cleanup === "function") {
+          pluginCleanups.set(pluginId, cleanup);
+        }
+        repository.setPluginStatus(pluginId, "running");
+        return true;
+      } catch (error) {
+        repository.setPluginStatus(pluginId, "error");
+        repository.log("error", "runtime", `Failed to init plugin ${plugin.id}`, {
+          error: error instanceof Error ? error.message : String(error)
+        });
+        throw error;
+      }
+    },
+
+    async stopPlugin(pluginId) {
+      const cleanup = pluginCleanups.get(pluginId);
+      if (!cleanup) return false;
+
+      pluginCleanups.delete(pluginId);
+      try {
+        await cleanup();
+        repository.setPluginStatus(pluginId, repository.isPluginEnabled(pluginId) ? "enabled" : "disabled");
+        return true;
+      } catch (error) {
+        repository.setPluginStatus(pluginId, "error");
+        repository.log("error", "runtime", `Failed to cleanup plugin ${pluginId}`, {
+          error: error instanceof Error ? error.message : String(error)
+        });
+        throw error;
+      }
+    },
+
+    async reloadPlugin(pluginId) {
+      await runtime.stopPlugin(pluginId);
+      return runtime.startPlugin(pluginId);
+    },
+
+    async setPluginEnabled(pluginId, enabled) {
+      repository.setPluginEnabled(pluginId, enabled);
+      const plugin = pluginMap.get(pluginId);
+      if (plugin) {
+        plugin._enabled = enabled;
+      }
+      outputDispatcher.setPlugins(loadedPlugins);
+      if (enabled) {
+        return runtime.startPlugin(pluginId);
+      }
+      return runtime.stopPlugin(pluginId);
     },
 
     markRunning(pid = process.pid) {
@@ -162,10 +230,21 @@ export async function createRuntime() {
       return {
         runtime: repository.getRuntimeState("runtime"),
         policy: policy.describe(),
+        model: describeModelConfig(config.model),
         ...repository.statusSummary()
       };
     }
   };
 
   return runtime;
+}
+
+function describeModelConfig(modelConfig) {
+  const provider = process.env.NEURA_MODEL_PROVIDER || modelConfig.provider;
+  return {
+    provider,
+    model: modelConfig.model,
+    apiKeyEnv: modelConfig.apiKeyEnv,
+    apiKeyConfigured: provider === "mock" ? true : Boolean(process.env[modelConfig.apiKeyEnv])
+  };
 }

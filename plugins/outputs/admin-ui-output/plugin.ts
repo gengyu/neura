@@ -80,7 +80,10 @@ export default {
         anthropicBaseUrl: runtime.config.model.anthropicBaseUrl,
         model: runtime.config.model.model,
         apiKeyEnv: runtime.config.model.apiKeyEnv,
-        apiKeyConfigured: Boolean(process.env[runtime.config.model.apiKeyEnv])
+        apiKeyConfigured:
+          (process.env.NEURA_MODEL_PROVIDER || runtime.config.model.provider) === "mock"
+            ? true
+            : Boolean(process.env[runtime.config.model.apiKeyEnv])
       },
       runtime: runtime.config.runtime,
       policy: runtime.policy.describe()
@@ -89,7 +92,7 @@ export default {
     app.get("/api/plugins", async () => runtime.repository.listPlugins());
     app.post("/api/plugins/:id", async (request) => {
       const body = PluginToggleSchema.parse(request.body ?? {});
-      runtime.repository.setPluginEnabled(request.params.id, body.enabled);
+      await runtime.setPluginEnabled(request.params.id, body.enabled);
       return { ok: true, pluginId: request.params.id, enabled: body.enabled };
     });
 
