@@ -13,7 +13,7 @@ export default {
     if (!options?.enabled) return null;
 
     const inboxPath = resolve(options.path);
-    const extensions = new Set(options.extensions ?? [".txt", ".md", ".json"]);
+    const extensions = new Set(options.extensions ?? [".txt", ".md", ".json", ".png", ".jpg", ".jpeg", ".webp"]);
     mkdirSync(inboxPath, { recursive: true });
 
     const watcher = chokidar.watch(inboxPath, {
@@ -25,14 +25,16 @@ export default {
     });
 
     watcher.on("add", async (filePath) => {
-      if (!extensions.has(extname(filePath))) return;
+      const extension = extname(filePath).toLowerCase();
+      if (!extensions.has(extension)) return;
       try {
-        const raw = readFileSync(filePath, "utf8");
-        const content = extname(filePath) === ".json" ? safeJson(raw) : raw;
+        const imageInput = toImageInput(filePath, extension);
+        const raw = imageInput ? null : readFileSync(filePath, "utf8");
+        const content = imageInput ?? (extension === ".json" ? safeJson(raw) : raw);
         await runtime.input(content, {
           pluginId: "folder-watch-input",
-          type: "file",
-          metadata: { path: filePath }
+          type: imageInput ? "image" : "file",
+          metadata: { path: filePath, source: "folder-watch" }
         });
       } catch (error) {
         runtime.repository.log("error", "folder-watch", "Folder input failed", {
@@ -65,4 +67,21 @@ function safeJson(raw) {
   } catch {
     return raw;
   }
+}
+
+function toImageInput(filePath, extension) {
+  const mimeType = imageMimeType(extension);
+  if (!mimeType) return null;
+  return {
+    path: filePath,
+    mimeType,
+    source: "folder-watch"
+  };
+}
+
+function imageMimeType(extension) {
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".webp") return "image/webp";
+  return null;
 }

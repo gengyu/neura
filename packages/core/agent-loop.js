@@ -23,15 +23,56 @@ const AVAILABLE_TOOLS = [
       },
       required: ["path"]
     }
+  },
+  {
+    name: "write_file",
+    description: "写入本地文件内容。覆盖已有文件属于高风险动作，可能需要用户确认。",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "文件的绝对路径" },
+        content: { type: "string", description: "要写入的内容" }
+      },
+      required: ["path", "content"]
+    }
+  },
+  {
+    name: "delete_file",
+    description: "删除本地文件。高风险动作，必须由用户确认。",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "文件的绝对路径" }
+      },
+      required: ["path"]
+    }
+  },
+  {
+    name: "execute_command",
+    description: "执行本地命令。高风险动作，必须由用户确认。",
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string", description: "要执行的命令" },
+        args: {
+          type: "array",
+          items: { type: "string" },
+          description: "命令参数列表"
+        },
+        cwd: { type: "string", description: "命令执行目录，可选" }
+      },
+      required: ["command"]
+    }
   }
 ];
 
 export class AgentLoop {
-  constructor({ repository, policy, modelProvider, tools }) {
+  constructor({ repository, policy, modelProvider, tools, outputDispatcher }) {
     this.repository = repository;
     this.policy = policy;
     this.modelProvider = modelProvider;
     this.tools = tools;
+    this.outputDispatcher = outputDispatcher;
   }
 
   async process(inputEvent) {
@@ -40,26 +81,25 @@ export class AgentLoop {
     this.repository.log("info", "input", "Input event accepted", { inputEventId: inputEvent.id, type: inputEvent.type });
 
     try {
-      const contextMemories = this.repository.listMemories(5);
       const executeTool = this.tools
         ? async (name, input) => {
             if (name === "search_memory") return this.tools.searchMemory(input.query);
             if (name === "read_file") return this.tools.readFile(input.path);
+            if (name === "write_file") return this.tools.writeFile(input.path, input.content);
+            if (name === "delete_file") return this.tools.deleteFile(input.path);
+            if (name === "execute_command") return this.tools.executeCommand(input.command, input.args, { cwd: input.cwd });
             throw new Error(`Unknown tool: ${name}`);
           }
         : undefined;
 
       const analysis = await this.modelProvider.analyzeInput(
         inputEvent,
-        { forceOutput: true, relatedMemories: contextMemories },
+        {},
         { tools: this.tools ? AVAILABLE_TOOLS : [], executeTool }
       );
 
       const { summary, tags, remembered } = analysis;
-      const relatedMemories = tags
-        .filter((tag) => tag !== "未分类")
-        .flatMap((tag) => this.repository.searchMemories(tag, 3))
-        .slice(0, 3);
+      const relatedMemories = analysis.relatedMemories ?? [];
 
       let memory = null;
       let memoryAction = "skipped";
@@ -92,22 +132,30 @@ export class AgentLoop {
       const result = {
         status: "completed",
         provider: analysis.provider,
-        fallbackReason: analysis.fallbackReason ?? null,
         summary,
         tags,
         remembered,
         memoryAction,
         memoryId: memory?.id ?? null,
+        shouldOutput: analysis.outputDecision.shouldOutput,
+        outputType: analysis.outputDecision.type,
         relatedMemoryIds: [...new Set(relatedMemories.map((item) => item.id))]
       };
 
       if (analysis.outputDecision.shouldOutput && this.policy.canSendOutput()) {
-        this.repository.createOutputEvent({
-          pluginId: "cli-output",
-          type: analysis.outputDecision.type,
-          content: result
-        });
-        this.repository.log("info", "output", "CLI output event created", { inputEventId: inputEvent.id });
+        if (this.outputDispatcher) {
+          await this.outputDispatcher({
+            type: analysis.outputDecision.type,
+            content: result
+          });
+        } else {
+          this.repository.createOutputEvent({
+            pluginId: "cli-output",
+            type: analysis.outputDecision.type,
+            content: result
+          });
+        }
+        this.repository.log("info", "output", "Output event created", { inputEventId: inputEvent.id });
       }
 
       this.repository.finishTask(task.id, TASK_STATUSES.COMPLETED, result);

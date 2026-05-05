@@ -11,7 +11,7 @@
     "start": "node ./bin/neura.js start",
     "stop": "node ./bin/neura.js stop",
     "status": "node ./bin/neura.js status",
-    "check": "node --check bin/neura.js && node --check apps/daemon/daemon.js && node --check packages/model/provider.js && node --check packages/plugin-sdk/loader.js && node --check packages/core/runtime.js && node --check packages/core/agent-loop.js",
+    "check": "node --check bin/neura.js && node --check apps/daemon/daemon.js && node --check packages/model/provider.js && node --check packages/plugin-sdk/loader.js && node --check packages/core/runtime.js && node --check packages/core/agent-loop.js && node --check packages/core/output-dispatcher.js && node --check packages/core/schedule-manager.js && node --check packages/tools/tools.js && node --check plugins/inputs/folder-watch-input/plugin.js && node --check plugins/inputs/screenshot-watch-input/plugin.js && node --check plugins/inputs/webhook-input/plugin.js && node --check plugins/outputs/cli-output/plugin.js && node --check plugins/outputs/file-output/plugin.js && node --check plugins/outputs/system-notification-output/plugin.js",
     "test": "node ./scripts/smoke-test.js"
   },
   "engines": {

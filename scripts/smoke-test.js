@@ -3,9 +3,7 @@ import { execFileSync } from "node:child_process";
 function run(args) {
   return execFileSync(process.execPath, ["./bin/neura.js", ...args], {
     encoding: "utf8",
-    env: {
-      ...process.env
-    }
+    env: process.env
   });
 }
 
@@ -22,28 +20,27 @@ if (!status.includes("连接状态:")) {
 }
 console.log("status: OK");
 
-// Skip input test if no API key configured (requires model)
 const apiKey = process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
-if (apiKey) {
-  const input = run(["input", "我想让 Neura 的插件体系保持极简，只分为输入插件和输出插件"]);
-  if (!input.includes("已处理输入")) {
-    throw new Error("Expected input to be processed");
-  }
-  console.log("input: OK");
-
-  const duplicateInput = run(["input", "我想让 Neura 的插件体系保持极简，只分为输入插件和输出插件"]);
-  if (!duplicateInput.includes("记忆动作: 更新")) {
-    throw new Error("Expected duplicate input to update an existing memory");
-  }
-  console.log("memory dedup: OK");
-
-  const memories = run(["memory", "search", "插件体系"]);
-  if (!memories.includes("插件")) {
-    throw new Error("Expected memory search to return plugin-related memory");
-  }
-  console.log("memory search: OK");
-} else {
-  console.log("input tests: SKIPPED (no API key configured)");
+if (!apiKey) {
+  throw new Error("Expected a real model API key. Set DEEPSEEK_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.");
 }
+
+const input = run(["input", "我想让 Neura 的插件体系保持极简，只分为输入插件和输出插件"]);
+if (!input.includes("已处理输入")) {
+  throw new Error("Expected input to be processed");
+}
+console.log("input: OK");
+
+const duplicateInput = run(["input", "我想让 Neura 的插件体系保持极简，只分为输入插件和输出插件"]);
+if (!duplicateInput.includes("记忆动作: 更新")) {
+  throw new Error("Expected duplicate input to update an existing memory");
+}
+console.log("memory dedup: OK");
+
+const memories = run(["memory", "search", "插件体系"]);
+if (!memories.includes("插件")) {
+  throw new Error("Expected memory search to return plugin-related memory");
+}
+console.log("memory search: OK");
 
 console.log("Smoke test passed");

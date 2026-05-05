@@ -4,7 +4,9 @@ import { z } from "zod";
 const WebhookPayloadSchema = z.object({
   type: z.string().optional(),
   content: z.unknown().optional(),
-  text: z.string().optional()
+  text: z.string().optional(),
+  imagePath: z.string().optional(),
+  mimeType: z.string().optional()
 }).passthrough();
 
 export default {
@@ -26,8 +28,15 @@ export default {
 
     async function handleInput(request) {
       const body = WebhookPayloadSchema.parse(request.body ?? {});
-      const content = body.content ?? body.text ?? body;
-      const type = body.type ?? (typeof content === "string" ? "text" : "event");
+      const content = body.imagePath
+        ? {
+            path: body.imagePath,
+            mimeType: body.mimeType ?? "image/png",
+            text: body.text ?? null,
+            source: "webhook"
+          }
+        : body.content ?? body.text ?? body;
+      const type = body.type ?? (body.imagePath ? "image" : typeof content === "string" ? "text" : "event");
       const { event, result } = await runtime.input(content, {
         pluginId: "webhook-input",
         type,

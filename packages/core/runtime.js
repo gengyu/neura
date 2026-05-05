@@ -9,6 +9,8 @@ import { loadLocalEnv } from "../shared/env.js";
 import { createModelProvider } from "../model/provider.js";
 import { ToolRegistry } from "../tools/tools.js";
 import { AgentLoop } from "./agent-loop.js";
+import { OutputDispatcher } from "./output-dispatcher.js";
+import { ScheduleManager } from "./schedule-manager.js";
 
 async function initializePlugins(repository, configPlugins) {
   const loaded = await loadPlugins();
@@ -43,19 +45,36 @@ export async function createRuntime() {
   const policy = new PermissionPolicy(config.policy);
   const modelProvider = createModelProvider(config.model);
   const tools = new ToolRegistry({ repository, policy });
-  const agentLoop = new AgentLoop({ repository, policy, modelProvider, tools });
+  const outputDispatcher = new OutputDispatcher({ repository, plugins: loadedPlugins });
+  let runtime;
+  const agentLoop = new AgentLoop({
+    repository,
+    policy,
+    modelProvider,
+    tools,
+    outputDispatcher: (event) => outputDispatcher.send(event)
+  });
+  const scheduleManager = new ScheduleManager({
+    repository,
+    outputDispatcher,
+    runtime: {
+      input: (...args) => runtime.input(...args)
+    }
+  });
 
-  return {
+  runtime = {
     config,
     repository,
     policy,
     tools,
     agentLoop,
+    outputDispatcher,
+    scheduleManager,
     loadedPlugins,
 
     async input(content, options = {}) {
       const pluginId = options.pluginId ?? "cli-input";
-      if (!repository.isPluginEnabled(pluginId)) {
+      if (!options.internal && !repository.isPluginEnabled(pluginId)) {
         throw new Error(`Input plugin is disabled: ${pluginId}`);
       }
       const event = repository.createInputEvent({
@@ -67,12 +86,12 @@ export async function createRuntime() {
       return { event, result: await agentLoop.process(event) };
     },
 
-    async initInputPlugins() {
+    async initPlugins() {
       const cleanupFns = [];
       for (const plugin of loadedPlugins) {
-        if (plugin.direction === "input" && plugin._enabled && typeof plugin.init === "function") {
+        if (plugin._enabled && typeof plugin.init === "function") {
           try {
-            const cleanup = await plugin.init(this);
+            const cleanup = await plugin.init(runtime);
             if (typeof cleanup === "function") {
               cleanupFns.push(cleanup);
             }
@@ -94,8 +113,9 @@ export async function createRuntime() {
         startedAt: new Date().toISOString(),
         heartbeatAt: new Date().toISOString()
       });
-      if (repository.isPluginEnabled("cli-input")) repository.setPluginStatus("cli-input", "running");
-      if (repository.isPluginEnabled("cli-output")) repository.setPluginStatus("cli-output", "running");
+      for (const plugin of repository.listPlugins()) {
+        if (plugin.enabled) repository.setPluginStatus(plugin.id, "running");
+      }
       repository.log("info", "runtime", "Runtime started", { pid });
     },
 
@@ -107,6 +127,14 @@ export async function createRuntime() {
         pid,
         heartbeatAt: new Date().toISOString()
       });
+    },
+
+    async processDueSchedules(now = new Date()) {
+      return scheduleManager.processDueSchedules(now);
+    },
+
+    async dispatchOutput(event) {
+      return outputDispatcher.send(event);
     },
 
     markStopped(reason = "stopped") {
@@ -132,4 +160,6 @@ export async function createRuntime() {
       };
     }
   };
+
+  return runtime;
 }

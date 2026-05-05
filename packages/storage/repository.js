@@ -242,12 +242,174 @@ export class Repository {
 
   createOutputEvent({ pluginId, type, content, status = "sent" }) {
     const now = nowIso();
-    const event = { id: createId("output"), pluginId, type, content, status, createdAt: now, sentAt: now };
+    const sentAt = status === "sent" ? now : null;
+    const event = { id: createId("output"), pluginId, type, content, status, createdAt: now, sentAt };
     this.store.run(`
       INSERT INTO output_events (id, plugin_id, type, content, status, created_at, sent_at)
-      VALUES (${this.store.value(event.id)}, ${this.store.value(pluginId)}, ${this.store.value(type)}, ${this.store.json(content)}, ${this.store.value(status)}, ${this.store.value(now)}, ${this.store.value(now)});
+      VALUES (${this.store.value(event.id)}, ${this.store.value(pluginId)}, ${this.store.value(type)}, ${this.store.json(content)}, ${this.store.value(status)}, ${this.store.value(now)}, ${this.store.value(sentAt)});
     `);
     return event;
+  }
+
+  updateOutputEventStatus(id, status, content = undefined) {
+    const sentAt = status === "sent" ? nowIso() : null;
+    const contentSql = content === undefined ? "content" : this.store.json(content);
+    this.store.run(`
+      UPDATE output_events
+      SET status = ${this.store.value(status)},
+          content = ${contentSql},
+          sent_at = ${this.store.value(sentAt)}
+      WHERE id = ${this.store.value(id)};
+    `);
+  }
+
+  listOutputEvents(limit = 20) {
+    return this.store.query(`
+      SELECT id, plugin_id AS pluginId, type, content, status, created_at AS createdAt, sent_at AS sentAt
+      FROM output_events
+      ORDER BY created_at DESC
+      LIMIT ${Number(limit)};
+    `).map((event) => ({
+      ...event,
+      content: parseJson(event.content)
+    }));
+  }
+
+  createConfirmationRequest({ toolName, payload, reason }) {
+    const now = nowIso();
+    const request = {
+      id: createId("confirm"),
+      toolName,
+      payload,
+      reason,
+      status: "pending",
+      resolution: null,
+      createdAt: now,
+      resolvedAt: null
+    };
+    this.store.run(`
+      INSERT INTO confirmation_requests (id, tool_name, payload, reason, status, resolution, created_at, resolved_at)
+      VALUES (${this.store.value(request.id)}, ${this.store.value(toolName)}, ${this.store.json(payload)}, ${this.store.value(reason)}, 'pending', NULL, ${this.store.value(now)}, NULL);
+    `);
+    return request;
+  }
+
+  getConfirmationRequest(id) {
+    const rows = this.store.query(`
+      SELECT id, tool_name AS toolName, payload, reason, status, resolution, created_at AS createdAt, resolved_at AS resolvedAt
+      FROM confirmation_requests
+      WHERE id = ${this.store.value(id)}
+      LIMIT 1;
+    `);
+    return rows[0] ? decodeConfirmationRequest(rows[0]) : null;
+  }
+
+  listConfirmationRequests(status = null, limit = 20) {
+    const where = status ? `WHERE status = ${this.store.value(status)}` : "";
+    return this.store.query(`
+      SELECT id, tool_name AS toolName, payload, reason, status, resolution, created_at AS createdAt, resolved_at AS resolvedAt
+      FROM confirmation_requests
+      ${where}
+      ORDER BY created_at DESC
+      LIMIT ${Number(limit)};
+    `).map(decodeConfirmationRequest);
+  }
+
+  resolveConfirmationRequest(id, resolution) {
+    const status = resolution === "approved" ? "approved" : "rejected";
+    const resolvedAt = nowIso();
+    this.store.run(`
+      UPDATE confirmation_requests
+      SET status = ${this.store.value(status)}, resolution = ${this.store.value(resolution)}, resolved_at = ${this.store.value(resolvedAt)}
+      WHERE id = ${this.store.value(id)};
+    `);
+    return this.getConfirmationRequest(id);
+  }
+
+  createSchedule({ name, mode, content, runAt, intervalMs = null, status = "active" }) {
+    const now = nowIso();
+    const schedule = {
+      id: createId("schedule"),
+      name,
+      mode,
+      content,
+      runAt,
+      intervalMs,
+      status,
+      lastRunAt: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.store.run(`
+      INSERT INTO schedules (id, name, mode, content, run_at, interval_ms, status, last_run_at, created_at, updated_at)
+      VALUES (
+        ${this.store.value(schedule.id)},
+        ${this.store.value(name)},
+        ${this.store.value(mode)},
+        ${this.store.json(content)},
+        ${this.store.value(runAt)},
+        ${intervalMs === null ? "NULL" : Number(intervalMs)},
+        ${this.store.value(status)},
+        NULL,
+        ${this.store.value(now)},
+        ${this.store.value(now)}
+      );
+    `);
+    return schedule;
+  }
+
+  listSchedules(status = null, limit = 50) {
+    const where = status ? `WHERE status = ${this.store.value(status)}` : "";
+    return this.store.query(`
+      SELECT id, name, mode, content, run_at AS runAt, interval_ms AS intervalMs, status, last_run_at AS lastRunAt, created_at AS createdAt, updated_at AS updatedAt
+      FROM schedules
+      ${where}
+      ORDER BY run_at ASC
+      LIMIT ${Number(limit)};
+    `).map(decodeSchedule);
+  }
+
+  getDueSchedules(now = nowIso()) {
+    return this.store.query(`
+      SELECT id, name, mode, content, run_at AS runAt, interval_ms AS intervalMs, status, last_run_at AS lastRunAt, created_at AS createdAt, updated_at AS updatedAt
+      FROM schedules
+      WHERE status = 'active' AND run_at <= ${this.store.value(now)}
+      ORDER BY run_at ASC;
+    `).map(decodeSchedule);
+  }
+
+  markScheduleRun(id, { nextRunAt = null, status = null } = {}) {
+    const now = nowIso();
+    const existing = this.store.query(`
+      SELECT id, name, mode, content, run_at AS runAt, interval_ms AS intervalMs, status, last_run_at AS lastRunAt, created_at AS createdAt, updated_at AS updatedAt
+      FROM schedules
+      WHERE id = ${this.store.value(id)}
+      LIMIT 1;
+    `)[0];
+    if (!existing) return null;
+    const nextStatus = status ?? existing.status;
+    const nextRun = nextRunAt ?? existing.runAt;
+    this.store.run(`
+      UPDATE schedules
+      SET run_at = ${this.store.value(nextRun)},
+          status = ${this.store.value(nextStatus)},
+          last_run_at = ${this.store.value(now)},
+          updated_at = ${this.store.value(now)}
+      WHERE id = ${this.store.value(id)};
+    `);
+    return this.listSchedules().find((item) => item.id === id) ?? null;
+  }
+
+  updateScheduleStatus(id, status) {
+    this.store.run(`
+      UPDATE schedules
+      SET status = ${this.store.value(status)}, updated_at = ${this.store.value(nowIso())}
+      WHERE id = ${this.store.value(id)};
+    `);
+  }
+
+  deleteSchedule(id) {
+    this.store.run(`DELETE FROM schedules WHERE id = ${this.store.value(id)};`);
   }
 
   createToolCall({ toolName, input, output = null, status, riskLevel = "low" }) {
@@ -317,6 +479,8 @@ export class Repository {
         (SELECT COUNT(*) FROM tasks) AS tasks,
         (SELECT COUNT(*) FROM memories) AS memories,
         (SELECT COUNT(*) FROM output_events) AS outputEvents,
+        (SELECT COUNT(*) FROM confirmation_requests WHERE status = 'pending') AS pendingApprovals,
+        (SELECT COUNT(*) FROM schedules WHERE status = 'active') AS activeSchedules,
         (SELECT COUNT(*) FROM logs WHERE level = 'error') AS errors;
     `)[0];
     return { plugins, inputCount, outputCount, counts };
@@ -327,6 +491,20 @@ function decodeMemory(row) {
   return {
     ...row,
     tags: parseJsonArray(row.tags)
+  };
+}
+
+function decodeConfirmationRequest(row) {
+  return {
+    ...row,
+    payload: parseJson(row.payload)
+  };
+}
+
+function decodeSchedule(row) {
+  return {
+    ...row,
+    content: parseJson(row.content)
   };
 }
 

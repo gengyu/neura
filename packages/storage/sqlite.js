@@ -98,6 +98,28 @@ export class SQLiteStore {
         created_at TEXT NOT NULL,
         finished_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS confirmation_requests (
+        id TEXT PRIMARY KEY,
+        tool_name TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        status TEXT NOT NULL,
+        resolution TEXT,
+        created_at TEXT NOT NULL,
+        resolved_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS schedules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        content TEXT NOT NULL,
+        run_at TEXT NOT NULL,
+        interval_ms INTEGER,
+        status TEXT NOT NULL,
+        last_run_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS logs (
         id TEXT PRIMARY KEY,
         level TEXT NOT NULL,

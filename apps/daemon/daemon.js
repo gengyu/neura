@@ -6,15 +6,22 @@ const runtime = await createRuntime();
 const stopRequestPath = resolve("data/neura.stop");
 
 await runtime.markRunning(process.pid);
-const pluginCleanups = await runtime.initInputPlugins();
+const pluginCleanups = await runtime.initPlugins();
 
-const interval = setInterval(() => {
-  if (existsSync(stopRequestPath)) {
-    unlinkSync(stopRequestPath);
-    shutdown("stop_request");
-    return;
+const interval = setInterval(async () => {
+  try {
+    if (existsSync(stopRequestPath)) {
+      unlinkSync(stopRequestPath);
+      shutdown("stop_request");
+      return;
+    }
+    runtime.heartbeat(process.pid);
+    await runtime.processDueSchedules(new Date());
+  } catch (error) {
+    runtime.repository.log("error", "runtime", "Heartbeat loop failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
   }
-  runtime.heartbeat(process.pid);
 }, runtime.config.runtime.heartbeatIntervalMs);
 
 async function shutdown(signal) {

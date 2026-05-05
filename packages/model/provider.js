@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { extname, resolve } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
@@ -9,7 +11,7 @@ const AnalysisSchema = z.object({
   remembered: z.boolean(),
   importance: z.number().min(1).max(5),
   confidence: z.number().min(0).max(1),
-  shouldOutput: z.boolean().default(true),
+  shouldOutput: z.boolean(),
   outputType: z.string().default("summary")
 });
 
@@ -53,12 +55,21 @@ export class OpenAICompatibleModelProvider {
       return this._singleShot(inputEvent, context);
     }
 
-    const systemPrompt = "你是 Neura 的 Agent Loop 分析器。你可以使用工具搜索记忆、读取文件来获取更多上下文。当你收集到足够信息后，必须调用 record_neura_input_analysis 工具来提交最终分析结果。";
+    const systemPrompt = [
+      "你是 Neura 的 Agent Loop 分析器。",
+      "你必须先调用 search_memory 获取相关记忆，再提交最终分析结果。",
+      "除非输入是纯文件路径且需要读取内容，否则不要调用 read_file。",
+      "如果 write_file、delete_file、execute_command 返回 confirmationRequired=true，说明动作已进入待确认队列。此时应把 shouldOutput 设为 true，并在摘要里明确告诉用户需要审批。",
+      "shouldOutput 必须谨慎判断：只有用户主动请求结果、外部系统需要响应、任务完成需要告知、出现错误、需要确认、发现重要信息或提醒时才为 true。普通沉淀型输入可为 false。",
+      "当你收集到足够信息后，必须调用 record_neura_input_analysis 工具来提交最终分析结果。"
+    ].join("\n");
     const messages = [
       { role: "system", content: systemPrompt },
-      { role: "user", content: buildPrompt(inputEvent, context) }
+      { role: "user", content: buildOpenAIUserContent(inputEvent, context) }
     ];
     const allTools = [...extraTools, ANALYSIS_TOOL_OPENAI];
+    let searchedMemory = false;
+    const relatedMemories = new Map();
 
     for (let i = 0; i < 5; i++) {
       const response = await this.client.chat.completions.create({
@@ -77,9 +88,16 @@ export class OpenAICompatibleModelProvider {
         for (const tc of msg.tool_calls) {
           const args = JSON.parse(tc.function.arguments || "{}");
           if (tc.function.name === ANALYSIS_TOOL_NAME) {
-            return normalizeAnalysis({ provider: this.id, ...args });
+            if (!searchedMemory) {
+              throw new Error("Model submitted analysis before calling search_memory");
+            }
+            return normalizeAnalysis({ provider: this.id, ...args }, { relatedMemories: [...relatedMemories.values()] });
           }
           const result = await executeTool(tc.function.name, args);
+          if (tc.function.name === "search_memory") {
+            searchedMemory = true;
+            collectRelatedMemories(relatedMemories, result);
+          }
           messages.push({
             role: "tool",
             tool_call_id: tc.id,
@@ -90,9 +108,12 @@ export class OpenAICompatibleModelProvider {
       }
 
       if (msg.content) {
+        if (!searchedMemory) {
+          throw new Error("Model returned text analysis before calling search_memory");
+        }
         try {
           const parsed = AnalysisSchema.parse(JSON.parse(msg.content));
-          return normalizeAnalysis({ provider: this.id, ...parsed });
+          return normalizeAnalysis({ provider: this.id, ...parsed }, { relatedMemories: [...relatedMemories.values()] });
         } catch {
           throw new Error("OpenAI-compatible provider returned unexpected response without tool calls");
         }
@@ -116,7 +137,7 @@ export class OpenAICompatibleModelProvider {
         },
         {
           role: "user",
-          content: buildPrompt(inputEvent, context)
+          content: buildOpenAIUserContent(inputEvent, context)
         }
       ]
     });
@@ -162,11 +183,20 @@ export class AnthropicCompatibleModelProvider {
       return this._singleShot(inputEvent, context);
     }
 
-    const systemPrompt = "你是 Neura 的 Agent Loop 分析器。你可以使用工具搜索记忆、读取文件来获取更多上下文。当你收集到足够信息后，必须调用 record_neura_input_analysis 工具来提交最终分析结果。";
+    const systemPrompt = [
+      "你是 Neura 的 Agent Loop 分析器。",
+      "你必须先调用 search_memory 获取相关记忆，再提交最终分析结果。",
+      "除非输入是纯文件路径且需要读取内容，否则不要调用 read_file。",
+      "如果 write_file、delete_file、execute_command 返回 confirmationRequired=true，说明动作已进入待确认队列。此时应把 shouldOutput 设为 true，并在摘要里明确告诉用户需要审批。",
+      "shouldOutput 必须谨慎判断：只有用户主动请求结果、外部系统需要响应、任务完成需要告知、出现错误、需要确认、发现重要信息或提醒时才为 true。普通沉淀型输入可为 false。",
+      "当你收集到足够信息后，必须调用 record_neura_input_analysis 工具来提交最终分析结果。"
+    ].join("\n");
     const messages = [
-      { role: "user", content: buildPrompt(inputEvent, context) }
+      { role: "user", content: buildAnthropicUserContent(inputEvent, context) }
     ];
     const allTools = [...extraTools, ANALYSIS_TOOL_ANTHROPIC];
+    let searchedMemory = false;
+    const relatedMemories = new Map();
 
     for (let i = 0; i < 5; i++) {
       const response = await this.client.messages.create({
@@ -186,9 +216,19 @@ export class AnthropicCompatibleModelProvider {
         const toolResults = [];
         for (const toolUse of toolUses) {
           if (toolUse.name === ANALYSIS_TOOL_NAME) {
-            return normalizeAnalysis({ provider: this.id, ...AnalysisSchema.parse(toolUse.input) });
+            if (!searchedMemory) {
+              throw new Error("Model submitted analysis before calling search_memory");
+            }
+            return normalizeAnalysis(
+              { provider: this.id, ...AnalysisSchema.parse(toolUse.input) },
+              { relatedMemories: [...relatedMemories.values()] }
+            );
           }
           const result = await executeTool(toolUse.name, toolUse.input);
+          if (toolUse.name === "search_memory") {
+            searchedMemory = true;
+            collectRelatedMemories(relatedMemories, result);
+          }
           toolResults.push({
             type: "tool_result",
             tool_use_id: toolUse.id,
@@ -204,9 +244,12 @@ export class AnthropicCompatibleModelProvider {
 
       const textBlock = response.content.find((part) => part.type === "text");
       if (textBlock) {
+        if (!searchedMemory) {
+          throw new Error("Model returned text analysis before calling search_memory");
+        }
         try {
           const parsed = AnalysisSchema.parse(JSON.parse(textBlock.text));
-          return normalizeAnalysis({ provider: this.id, ...parsed });
+          return normalizeAnalysis({ provider: this.id, ...parsed }, { relatedMemories: [...relatedMemories.values()] });
         } catch {
           throw new Error("Anthropic-compatible provider returned unexpected text response");
         }
@@ -229,7 +272,7 @@ export class AnthropicCompatibleModelProvider {
       messages: [
         {
           role: "user",
-          content: buildPrompt(inputEvent, context)
+          content: buildAnthropicUserContent(inputEvent, context)
         }
       ]
     });
@@ -286,12 +329,46 @@ function buildPrompt(inputEvent, context) {
   return [
     `输入类型：${inputEvent.type}`,
     `输入内容：${formatContent(inputEvent.content)}`,
-    `相关记忆 ID：${(context.relatedMemories ?? []).map((memory) => memory.id).join(", ") || "无"}`,
-    "请判断是否值得长期记忆，并给出摘要、标签、重要性和输出决策。"
+    `已有上下文提示：${formatExistingContext(context)}`,
+    "请先使用 search_memory 搜索与输入最相关的记忆。搜索查询应来自输入主题、实体、项目名、关键决策或用户意图。",
+    "请判断是否值得长期记忆，并给出摘要、标签、重要性和输出决策。",
+    "输出决策规则：普通记录/收藏/上下文沉淀通常 shouldOutput=false；用户明确询问、命令执行结果、错误、确认请求、重要提醒或外部同步响应才 shouldOutput=true。"
   ].join("\n");
 }
 
-function normalizeAnalysis(candidate) {
+function buildOpenAIUserContent(inputEvent, context) {
+  const prompt = buildPrompt(inputEvent, context);
+  const image = getImageAttachment(inputEvent);
+  if (!image) return prompt;
+  return [
+    { type: "text", text: prompt },
+    {
+      type: "image_url",
+      image_url: {
+        url: toDataUrl(image)
+      }
+    }
+  ];
+}
+
+function buildAnthropicUserContent(inputEvent, context) {
+  const prompt = buildPrompt(inputEvent, context);
+  const image = getImageAttachment(inputEvent);
+  if (!image) return prompt;
+  return [
+    { type: "text", text: prompt },
+    {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: image.mimeType,
+        data: image.base64
+      }
+    }
+  ];
+}
+
+function normalizeAnalysis(candidate, extras = {}) {
   const parsed = AnalysisSchema.parse(candidate);
   return {
     provider: candidate.provider,
@@ -301,10 +378,11 @@ function normalizeAnalysis(candidate) {
     importance: parsed.importance,
     confidence: parsed.confidence,
     outputDecision: {
-      shouldOutput: parsed.shouldOutput ?? true,
+      shouldOutput: parsed.shouldOutput,
       type: parsed.outputType ?? "summary",
       reason: "model_decision"
-    }
+    },
+    relatedMemories: dedupeMemories(extras.relatedMemories ?? [])
   };
 }
 
@@ -315,4 +393,52 @@ function trimTrailingSlash(value = "") {
 function formatContent(content) {
   if (typeof content === "string") return content;
   return JSON.stringify(content, null, 2);
+}
+
+function getImageAttachment(inputEvent) {
+  if (inputEvent.type !== "image") return null;
+  const path = inputEvent.content?.path ?? inputEvent.content?.imagePath ?? inputEvent.metadata?.path;
+  if (!path) return null;
+  const absolutePath = resolve(path);
+  const base64 = readFileSync(absolutePath).toString("base64");
+  return {
+    path: absolutePath,
+    mimeType: inputEvent.content?.mimeType ?? detectMimeType(absolutePath),
+    base64
+  };
+}
+
+function formatExistingContext(context = {}) {
+  if (Array.isArray(context.relatedMemories) && context.relatedMemories.length > 0) {
+    return context.relatedMemories.map((memory) => memory.id).join(", ");
+  }
+  return "无，需自行调用 search_memory 检索";
+}
+
+function collectRelatedMemories(target, result) {
+  for (const memory of dedupeMemories(Array.isArray(result) ? result : [])) {
+    target.set(memory.id, memory);
+  }
+}
+
+function dedupeMemories(memories) {
+  const unique = new Map();
+  for (const memory of memories) {
+    if (!memory || !memory.id) continue;
+    unique.set(memory.id, memory);
+  }
+  return [...unique.values()];
+}
+
+function toDataUrl(image) {
+  return `data:${image.mimeType};base64,${image.base64}`;
+}
+
+function detectMimeType(path) {
+  const ext = extname(path).toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  return "application/octet-stream";
 }
