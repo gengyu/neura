@@ -25,8 +25,7 @@ export default {
     anthropicBaseUrl: "https://api.deepseek.com/anthropic",
     model: "deepseek-chat",
     apiKeyEnv: "DEEPSEEK_API_KEY",
-    timeoutMs: 30000,
-    fallbackProvider: "rule-based"
+    timeoutMs: 30000
   },
   policy: {
     allowOutput: true,
@@ -35,52 +34,13 @@ export default {
     allowNetwork: true,
     allowCommandExecution: false
   },
+  // Plugins are auto-discovered from the plugins/ directory.
+  // Use this array to override enabled status or config for specific plugins.
   plugins: [
-    {
-      id: "cli-input",
-      name: "CLI Input",
-      direction: "input",
-      type: "cli",
-      enabled: true,
-      config: {}
-    },
-    {
-      id: "webhook-input",
-      name: "Webhook Input",
-      direction: "input",
-      type: "webhook",
-      enabled: true,
-      config: {
-        path: "/input"
-      }
-    },
-    {
-      id: "folder-watch-input",
-      name: "Folder Watch Input",
-      direction: "input",
-      type: "folder-watch",
-      enabled: true,
-      config: {
-        path: "data/inbox"
-      }
-    },
-    {
-      id: "cli-output",
-      name: "CLI Output",
-      direction: "output",
-      type: "cli",
-      enabled: true,
-      config: {}
-    },
-    {
-      id: "local-log-output",
-      name: "Local Log Output",
-      direction: "output",
-      type: "file",
-      enabled: true,
-      config: {
-        path: "logs/neura.log"
-      }
-    }
+    { id: "cli-input", enabled: true },
+    { id: "webhook-input", enabled: true },
+    { id: "folder-watch-input", enabled: true },
+    { id: "cli-output", enabled: true },
+    { id: "local-log-output", enabled: true }
   ]
 };

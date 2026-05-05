@@ -1,11 +1,37 @@
 import { INPUT_STATUSES, TASK_STATUSES } from "../shared/types.js";
 import { normalizeToText } from "../memory/memory.js";
 
+const AVAILABLE_TOOLS = [
+  {
+    name: "search_memory",
+    description: "搜索 Neura 记忆库，查找与查询相关的历史记忆，用于获取上下文",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "搜索关键词或短语" }
+      },
+      required: ["query"]
+    }
+  },
+  {
+    name: "read_file",
+    description: "读取本地文件内容",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "文件的绝对路径" }
+      },
+      required: ["path"]
+    }
+  }
+];
+
 export class AgentLoop {
-  constructor({ repository, policy, modelProvider }) {
+  constructor({ repository, policy, modelProvider, tools }) {
     this.repository = repository;
     this.policy = policy;
     this.modelProvider = modelProvider;
+    this.tools = tools;
   }
 
   async process(inputEvent) {
@@ -14,9 +40,21 @@ export class AgentLoop {
     this.repository.log("info", "input", "Input event accepted", { inputEventId: inputEvent.id, type: inputEvent.type });
 
     try {
-      const initialTags = ["Neura", "智能体", "运行时", "记忆", "插件"];
-      const contextMemories = initialTags.flatMap((tag) => this.repository.searchMemories(tag, 2)).slice(0, 5);
-      const analysis = await this.modelProvider.analyzeInput(inputEvent, { forceOutput: true, relatedMemories: contextMemories });
+      const contextMemories = this.repository.listMemories(5);
+      const executeTool = this.tools
+        ? async (name, input) => {
+            if (name === "search_memory") return this.tools.searchMemory(input.query);
+            if (name === "read_file") return this.tools.readFile(input.path);
+            throw new Error(`Unknown tool: ${name}`);
+          }
+        : undefined;
+
+      const analysis = await this.modelProvider.analyzeInput(
+        inputEvent,
+        { forceOutput: true, relatedMemories: contextMemories },
+        { tools: this.tools ? AVAILABLE_TOOLS : [], executeTool }
+      );
+
       const { summary, tags, remembered } = analysis;
       const relatedMemories = tags
         .filter((tag) => tag !== "未分类")

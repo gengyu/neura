@@ -1,14 +1,12 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { createRuntime } from "../../packages/core/runtime.js";
-import { startFolderWatcher } from "./folder-watch.js";
-import { startWebhookServer } from "./webhook.js";
 
-const runtime = createRuntime();
+const runtime = await createRuntime();
 const stopRequestPath = resolve("data/neura.stop");
+
 await runtime.markRunning(process.pid);
-const webhookServer = await startWebhookServer(runtime);
-const folderWatcher = startFolderWatcher(runtime);
+const pluginCleanups = await runtime.initInputPlugins();
 
 const interval = setInterval(() => {
   if (existsSync(stopRequestPath)) {
@@ -19,10 +17,17 @@ const interval = setInterval(() => {
   runtime.heartbeat(process.pid);
 }, runtime.config.runtime.heartbeatIntervalMs);
 
-function shutdown(signal) {
+async function shutdown(signal) {
   clearInterval(interval);
-  webhookServer?.close?.();
-  folderWatcher?.close?.();
+  for (const cleanup of pluginCleanups) {
+    try {
+      await cleanup();
+    } catch (error) {
+      runtime.repository.log("error", "runtime", "Plugin cleanup failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
   runtime.markStopped(signal);
   process.exit(0);
 }

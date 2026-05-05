@@ -20,8 +20,8 @@ program
 
 program.command("start").description("启动 Neura Runtime").action(start);
 program.command("stop").description("停止 Neura Runtime").action(stop);
-program.command("restart").description("重启 Neura Runtime").action(() => {
-  stop();
+program.command("restart").description("重启 Neura Runtime").action(async () => {
+  await stop();
   start();
 });
 program.command("status").description("查看运行状态").action(status);
@@ -74,9 +74,7 @@ function readPid() {
 
 function start() {
   const existingPid = readPid();
-  const runtime = createRuntime();
-  const runtimeState = runtime.status().runtime?.value;
-  if (isProcessAlive(existingPid) || isHeartbeatFresh(runtimeState)) {
+  if (isProcessAlive(existingPid)) {
     console.log(`Neura 已在运行，PID: ${existingPid}`);
     return;
   }
@@ -92,9 +90,9 @@ function start() {
   console.log(`Neura 已启动，PID: ${child.pid}`);
 }
 
-function stop() {
+async function stop() {
   const pid = readPid();
-  const runtime = createRuntime();
+  const runtime = await createRuntime();
   const runtimeState = runtime.status().runtime?.value;
 
   if (!pid && !isHeartbeatFresh(runtimeState)) {
@@ -121,8 +119,8 @@ function stop() {
   console.log("Neura 已停止");
 }
 
-function status() {
-  const runtime = createRuntime();
+async function status() {
+  const runtime = await createRuntime();
   const state = runtime.status();
   const runtimeState = state.runtime?.value ?? { status: "stopped" };
   const pid = readPid() ?? runtimeState.pid;
@@ -151,7 +149,7 @@ function status() {
 
 async function input(textParts) {
   const text = textParts.join(" ").trim();
-  const runtime = createRuntime();
+  const runtime = await createRuntime();
   const { event, result } = await runtime.input(text, { metadata: { command: "neura input" } });
 
   console.log("已处理输入");
@@ -163,8 +161,9 @@ async function input(textParts) {
   if (result.memoryId) console.log(`记忆 ID: ${result.memoryId}`);
 }
 
-function listInputs() {
-  const inputs = createRuntime().repository.listInputEvents();
+async function listInputs() {
+  const runtime = await createRuntime();
+  const inputs = runtime.repository.listInputEvents();
   if (inputs.length === 0) return console.log("还没有输入事件。");
   for (const event of inputs) {
     console.log(`${event.id}`);
@@ -175,8 +174,9 @@ function listInputs() {
   }
 }
 
-function listTasks() {
-  const tasks = createRuntime().repository.listTasks();
+async function listTasks() {
+  const runtime = await createRuntime();
+  const tasks = runtime.repository.listTasks();
   if (tasks.length === 0) return console.log("还没有任务。");
   for (const task of tasks) {
     console.log(`${task.id}`);
@@ -188,8 +188,9 @@ function listTasks() {
   }
 }
 
-function listMemories() {
-  const memories = createRuntime().repository.listMemories();
+async function listMemories() {
+  const runtime = await createRuntime();
+  const memories = runtime.repository.listMemories();
   if (memories.length === 0) return console.log("还没有记忆。");
   for (const memory of memories) {
     console.log(`${memory.id}`);
@@ -200,8 +201,9 @@ function listMemories() {
   }
 }
 
-function searchMemories(queryParts) {
-  const memories = createRuntime().repository.searchMemories(queryParts.join(" ").trim());
+async function searchMemories(queryParts) {
+  const runtime = await createRuntime();
+  const memories = runtime.repository.searchMemories(queryParts.join(" ").trim());
   if (memories.length === 0) return console.log("没有找到相关记忆。");
   for (const memory of memories) {
     console.log(`${memory.id}`);
@@ -211,8 +213,9 @@ function searchMemories(queryParts) {
   }
 }
 
-function listPlugins() {
-  const plugins = createRuntime().repository.listPlugins();
+async function listPlugins() {
+  const runtime = await createRuntime();
+  const plugins = runtime.repository.listPlugins();
   for (const plugin of plugins) {
     console.log(`${plugin.id}`);
     console.log(`  名称: ${plugin.name}`);
@@ -223,21 +226,24 @@ function listPlugins() {
   }
 }
 
-function setPluginEnabled(pluginId, enabled) {
-  createRuntime().repository.setPluginEnabled(pluginId, enabled);
+async function setPluginEnabled(pluginId, enabled) {
+  const runtime = await createRuntime();
+  runtime.repository.setPluginEnabled(pluginId, enabled);
   console.log(`${pluginId} 已${enabled ? "启用" : "禁用"}`);
 }
 
-function logs() {
-  const logs = createRuntime().repository.recentLogs();
+async function logs() {
+  const runtime = await createRuntime();
+  const logs = runtime.repository.recentLogs();
   if (logs.length === 0) return console.log("还没有日志。");
   for (const log of logs) {
     console.log(`[${log.createdAt}] ${log.level}/${log.type} ${log.message}`);
   }
 }
 
-function listTools() {
-  const calls = createRuntime().repository.listToolCalls();
+async function listTools() {
+  const runtime = await createRuntime();
+  const calls = runtime.repository.listToolCalls();
   if (calls.length === 0) return console.log("还没有工具调用。");
   for (const call of calls) {
     console.log(`${call.id}`);
@@ -248,8 +254,8 @@ function listTools() {
   }
 }
 
-function showConfig() {
-  const runtime = createRuntime();
+async function showConfig() {
+  const runtime = await createRuntime();
   const model = runtime.config.model;
   console.log("模型:");
   console.log(`  provider: ${process.env.NEURA_MODEL_PROVIDER || model.provider}`);
