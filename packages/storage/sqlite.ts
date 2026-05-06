@@ -29,15 +29,15 @@ export class SQLiteStore {
   }
 
   initialize() {
-    this.run(`
-      CREATE TABLE IF NOT EXISTS agents (
+    const statements = [
+      `CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS plugins (
+      );`,
+      `CREATE TABLE IF NOT EXISTS plugins (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         direction TEXT NOT NULL,
@@ -47,8 +47,8 @@ export class SQLiteStore {
         config TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS input_events (
+      );`,
+      `CREATE TABLE IF NOT EXISTS input_events (
         id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL DEFAULT 'default-agent',
         plugin_id TEXT NOT NULL,
@@ -58,8 +58,8 @@ export class SQLiteStore {
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
         processed_at TEXT
-      );
-      CREATE TABLE IF NOT EXISTS tasks (
+      );`,
+      `CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL DEFAULT 'default-agent',
         input_event_id TEXT,
@@ -69,8 +69,8 @@ export class SQLiteStore {
         error TEXT,
         created_at TEXT NOT NULL,
         finished_at TEXT
-      );
-      CREATE TABLE IF NOT EXISTS memories (
+      );`,
+      `CREATE TABLE IF NOT EXISTS memories (
         id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL DEFAULT 'default-agent',
         content TEXT NOT NULL,
@@ -81,8 +81,8 @@ export class SQLiteStore {
         confidence REAL NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS output_events (
+      );`,
+      `CREATE TABLE IF NOT EXISTS output_events (
         id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL DEFAULT 'default-agent',
         plugin_id TEXT NOT NULL,
@@ -91,8 +91,8 @@ export class SQLiteStore {
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
         sent_at TEXT
-      );
-      CREATE TABLE IF NOT EXISTS tool_calls (
+      );`,
+      `CREATE TABLE IF NOT EXISTS tool_calls (
         id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL DEFAULT 'default-agent',
         tool_name TEXT NOT NULL,
@@ -102,8 +102,8 @@ export class SQLiteStore {
         risk_level TEXT NOT NULL,
         created_at TEXT NOT NULL,
         finished_at TEXT
-      );
-      CREATE TABLE IF NOT EXISTS confirmation_requests (
+      );`,
+      `CREATE TABLE IF NOT EXISTS confirmation_requests (
         id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL DEFAULT 'default-agent',
         tool_name TEXT NOT NULL,
@@ -113,8 +113,8 @@ export class SQLiteStore {
         resolution TEXT,
         created_at TEXT NOT NULL,
         resolved_at TEXT
-      );
-      CREATE TABLE IF NOT EXISTS schedules (
+      );`,
+      `CREATE TABLE IF NOT EXISTS schedules (
         id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL DEFAULT 'default-agent',
         name TEXT NOT NULL,
@@ -126,8 +126,8 @@ export class SQLiteStore {
         last_run_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS logs (
+      );`,
+      `CREATE TABLE IF NOT EXISTS logs (
         id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL DEFAULT 'default-agent',
         level TEXT NOT NULL,
@@ -135,19 +135,22 @@ export class SQLiteStore {
         message TEXT NOT NULL,
         metadata TEXT NOT NULL,
         created_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS runtime_state (
+      );`,
+      `CREATE TABLE IF NOT EXISTS runtime_state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS memory_vectors (
+      );`,
+      `CREATE TABLE IF NOT EXISTS memory_vectors (
         memory_id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL DEFAULT 'default-agent',
         vector TEXT NOT NULL,
         updated_at TEXT NOT NULL
-      );
-    `);
+      );`
+    ];
+    for (const statement of statements) {
+      this.run(statement);
+    }
     this.ensureColumn("input_events", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
     this.ensureColumn("tasks", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
     this.ensureColumn("memories", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
@@ -160,6 +163,7 @@ export class SQLiteStore {
 
   ensureColumn(table, column, definition) {
     const columns = this.db.query(`PRAGMA table_info(${table})`).all();
+    if (!columns.length) return;
     if (!columns.some((item) => item.name === column)) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
     }

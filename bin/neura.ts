@@ -34,10 +34,14 @@ inputs.command("list").description("列出最近输入").action(listInputs);
 const tasks = program.command("tasks").description("任务");
 tasks.command("list").description("列出最近任务").action(listTasks);
 
+const history = program.command("history").description("历史数据");
+history.command("clear").description("清空当前 Agent 的输入、记忆、任务、输出和日志").option("--yes", "跳过确认").action(clearHistory);
+
 const memory = program.command("memory").description("记忆");
 memory.command("list").description("列出记忆").action(listMemories);
 memory.command("search").description("搜索记忆").argument("<query...>", "搜索词").action(searchMemories);
 memory.command("reindex").description("重建记忆向量索引").action(reindexMemories);
+program.command("review").description("整理最近记录或某个主题").argument("[query...]", "可选主题").action(review);
 
 const agents = program.command("agents").description("Agent 管理");
 agents.command("list").description("列出 Agent").action(listAgents);
@@ -186,11 +190,23 @@ async function input(textParts) {
 
   console.log("已处理输入");
   console.log(`输入 ID: ${event.id}`);
+  console.log(`任务类型: ${result.taskType}`);
+  if (Array.isArray(result.decision)) console.log(`决策动作: ${result.decision.join(", ")}`);
   console.log(`摘要: ${result.summary}`);
+  if (Array.isArray(result.actions) && result.actions.length > 0) {
+    console.log("下一步:");
+    for (const action of result.actions.slice(0, 4)) {
+      console.log(`  - ${action}`);
+    }
+  }
   console.log(`标签: ${result.tags.join(", ")}`);
   console.log(`写入记忆: ${result.remembered ? "是" : "否"}`);
   console.log(`记忆动作: ${formatMemoryAction(result.memoryAction)}`);
   if (result.memoryId) console.log(`记忆 ID: ${result.memoryId}`);
+  if (result.schedule?.created) {
+    console.log(`定时任务: ${result.schedule.id}`);
+    console.log(`提醒时间: ${result.schedule.runAt}`);
+  }
 }
 
 async function inputImage(path, noteParts = []) {
@@ -243,6 +259,22 @@ async function listTasks() {
   }
 }
 
+async function clearHistory(options = {}) {
+  if (!options.yes) {
+    console.log("这是破坏性操作：会清空当前 Agent 的输入、记忆、任务、输出、审批、定时、工具调用和日志。");
+    console.log("如果确认要清空，请重新运行：bun run neura -- history clear --yes");
+    return;
+  }
+  const runtime = await createRuntime();
+  const result = runtime.repository.clearCurrentAgentHistory();
+  console.log(`已清空历史数据，Agent: ${result.agentId}`);
+  console.log(`输入事件: ${result.deleted.inputEvents}`);
+  console.log(`任务: ${result.deleted.tasks}`);
+  console.log(`记忆: ${result.deleted.memories}`);
+  console.log(`输出事件: ${result.deleted.outputEvents}`);
+  console.log(`日志: ${result.deleted.logs}`);
+}
+
 async function listMemories() {
   const runtime = await createRuntime();
   const memories = runtime.repository.listMemories();
@@ -272,6 +304,14 @@ async function reindexMemories() {
   const runtime = await createRuntime();
   const count = runtime.repository.reindexMemoryVectors();
   console.log(`已重建记忆向量索引: ${count}`);
+}
+
+async function review(queryParts = []) {
+  const runtime = await createRuntime();
+  const query = queryParts.join(" ").trim();
+  const result = await runtime.review(query);
+  console.log(query ? `整理主题: ${query}` : "整理最近记录");
+  console.log(result.summary);
 }
 
 async function listAgents() {

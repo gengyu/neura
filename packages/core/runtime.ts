@@ -10,6 +10,7 @@ import { createModelProvider } from "../model/provider.ts";
 import { ToolRegistry } from "../tools/tools.ts";
 import { AgentLoop } from "./agent-loop.ts";
 import { OutputDispatcher } from "./output-dispatcher.ts";
+import { synthesizeResult } from "./result-synthesizer.ts";
 import { ScheduleManager } from "./schedule-manager.ts";
 
 async function initializePlugins(repository, configPlugins) {
@@ -98,6 +99,19 @@ export async function createRuntime() {
         metadata: options.metadata ?? {}
       });
       return { event, result: await agentLoop.process(event) };
+    },
+
+    async review(query = "", options = {}) {
+      const limit = options.limit ?? 12;
+      const memories = query
+        ? repository.searchMemories(query, limit)
+        : repository.listMemories(limit);
+      return synthesizeResult({
+        mode: "review",
+        query,
+        memories,
+        modelProvider: getModelProvider()
+      });
     },
 
     async initPlugins() {

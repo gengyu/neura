@@ -7,7 +7,7 @@ export default {
   type: "system-notification",
 
   async send({ content }) {
-    const title = content.title ?? "Neura";
+    const title = content.title ?? `Neura${content.taskType ? ` · ${content.taskType}` : ""}`;
     const body = truncate(content.summary ?? content.message ?? JSON.stringify(content), 180);
 
     if (process.platform === "darwin") {

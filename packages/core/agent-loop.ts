@@ -1,5 +1,9 @@
 import { INPUT_STATUSES, TASK_STATUSES } from "../shared/types.ts";
 import { normalizeToText } from "../memory/memory.ts";
+import { normalizeInputEvent } from "./input-normalizer.ts";
+import { buildOutputPlan } from "./output-routing.ts";
+import { synthesizeCurrentInput, synthesizeResult } from "./result-synthesizer.ts";
+import { detectReminderPlan } from "./reminder-intent.ts";
 
 const AVAILABLE_TOOLS = [
   {
@@ -107,8 +111,9 @@ export class AgentLoop {
     this.repository.log("info", "input", "Input event accepted", { inputEventId: inputEvent.id, type: inputEvent.type });
 
     try {
+      const normalizedInput = normalizeInputEvent(inputEvent);
       const modelProvider = this.getModelProvider();
-      const contextMemories = this.repository.searchMemories(normalizeToText(inputEvent.content), 5);
+      const contextMemories = this.repository.searchMemories(normalizedInput.memorySearchQuery || normalizeToText(inputEvent.content), 5);
       const executeTool = this.tools
         ? async (name, input) => {
             if (name === "search_memory") return this.tools.searchMemory(input.query);
@@ -124,64 +129,169 @@ export class AgentLoop {
 
       const analysis = await modelProvider.analyzeInput(
         inputEvent,
-        { relatedMemories: contextMemories },
+        { normalizedInput, relatedMemories: contextMemories },
         { tools: this.tools ? AVAILABLE_TOOLS : [], executeTool }
       );
 
-      const { summary, tags, remembered } = analysis;
+      const finalTaskType = chooseTaskType(normalizedInput, analysis);
+      analysis.taskType = finalTaskType;
+      const { summary, tags } = analysis;
       const relatedMemories = analysis.relatedMemories ?? [];
+      const memoryDecision = applyMemoryPolicy(normalizedInput, analysis.memoryDecision ?? {
+        shouldRemember: analysis.remembered,
+        memoryType: "上下文总结",
+        reason: "legacy_analysis",
+        actionHint: analysis.remembered ? "create_or_update" : "skip"
+      });
+      const remembered = Boolean(memoryDecision.shouldRemember);
 
       let memory = null;
       let memoryAction = "skipped";
-      if (remembered) {
+      if (memoryDecision.shouldRemember) {
         const memoryPayload = {
-          content: normalizeToText(inputEvent.content),
-          summary,
-          tags,
+          content: normalizeToText({
+            input: normalizedInput.normalizedText,
+            facts: analysis.extractedFacts ?? [],
+            source: normalizedInput.sourcePluginId,
+            scenario: normalizedInput.scenario
+          }),
+          summary: buildMemorySummary(summary, memoryDecision.memoryType),
+          tags: dedupeTags(tags, memoryDecision.memoryType, analysis.category),
           sourceInputId: inputEvent.id,
           importance: analysis.importance,
           confidence: analysis.confidence
         };
-        const similar = this.repository.findSimilarMemory(memoryPayload);
-        if (similar) {
+        const similar = this.repository.findSimilarMemory(memoryPayload, shouldUseStrictSimilarity(memoryDecision) ? 0.86 : 0.78);
+        if (similar && memoryDecision.actionHint !== "create") {
           memory = this.repository.updateMemory(similar.memory.id, memoryPayload);
           memoryAction = "updated";
           this.repository.log("info", "memory", "Memory updated", {
             memoryId: memory.id,
             inputEventId: inputEvent.id,
             similarity: similar.score,
-            tags
+            tags: memoryPayload.tags,
+            memoryType: memoryDecision.memoryType
           });
-        } else {
+        } else if (memoryDecision.actionHint !== "skip") {
           memory = this.repository.createMemory(memoryPayload);
           memoryAction = "created";
-          this.repository.log("info", "memory", "Memory created", { memoryId: memory.id, inputEventId: inputEvent.id, tags });
+          this.repository.log("info", "memory", "Memory created", {
+            memoryId: memory.id,
+            inputEventId: inputEvent.id,
+            tags: memoryPayload.tags,
+            memoryType: memoryDecision.memoryType
+          });
         }
       }
 
       const result = {
         status: "completed",
         provider: analysis.provider,
+        taskType: finalTaskType,
+        scenario: normalizedInput.scenario,
+        category: analysis.category,
+        intent: analysis.intent,
+        decision: buildDecisionLabel(finalTaskType, memoryDecision),
         summary,
         tags,
         remembered,
+        memoryType: memoryDecision.memoryType,
+        memoryReason: memoryDecision.reason,
         memoryAction,
         memoryId: memory?.id ?? null,
         shouldOutput: analysis.outputDecision.shouldOutput,
         outputType: analysis.outputDecision.type,
+        outputReason: analysis.outputDecision.reason,
+        importance: analysis.importance,
+        confidence: analysis.confidence,
+        extractedFacts: analysis.extractedFacts ?? [],
+        warnings: analysis.warnings ?? [],
+        normalizedInput: {
+          title: normalizedInput.title,
+          inputType: normalizedInput.inputType,
+          sourceKind: normalizedInput.sourceKind,
+          keywords: normalizedInput.keywords
+        },
         relatedMemoryIds: [...new Set(relatedMemories.map((item) => item.id))]
       };
 
-      if (analysis.outputDecision.shouldOutput && this.policy.canSendOutput()) {
+      if (result.taskType === "summarize_current") {
+        const synthesized = await synthesizeCurrentInput({
+          normalizedInput,
+          analysis,
+          modelProvider
+        });
+        result.summary = synthesized.summary;
+        result.answer = synthesized.summary;
+        result.themes = synthesized.themes;
+        result.actions = synthesized.actions;
+        result.shouldOutput = true;
+        result.outputType = "current_summary";
+        result.outputReason = "summarized_current_input";
+      } else if (["query", "memory_query", "action_request"].includes(result.taskType)) {
+        const synthesized = await synthesizeResult({
+          mode: "answer",
+          query: normalizedInput.normalizedText,
+          memories: relatedMemories.length > 0 ? relatedMemories : this.repository.searchMemories(normalizedInput.memorySearchQuery, 8),
+          normalizedInput,
+          analysis,
+          modelProvider
+        });
+        result.summary = synthesized.summary;
+        result.answer = synthesized.summary;
+        result.themes = synthesized.themes;
+        result.actions = synthesized.actions;
+        result.relatedMemoryIds = synthesized.sourceMemoryIds ?? result.relatedMemoryIds;
+        result.shouldOutput = true;
+        result.outputType = "answer";
+        result.outputReason = "synthesized_from_memory";
+      }
+
+      const reminderPlan = detectReminderPlan(normalizedInput, analysis);
+      if (reminderPlan) {
+        const schedule = this.repository.createSchedule(reminderPlan);
+        result.schedule = {
+          created: true,
+          id: schedule.id,
+          name: schedule.name,
+          mode: schedule.mode,
+          runAt: schedule.runAt,
+          intervalMs: schedule.intervalMs
+        };
+        result.taskType = "reminder";
+        result.shouldOutput = true;
+        result.outputType = "reminder_created";
+        result.outputReason = "reminder_schedule_created";
+      }
+
+      const outputPlan = buildOutputPlan({
+        normalizedInput,
+        analysis: {
+          ...analysis,
+          taskType: result.taskType,
+          outputDecision: {
+            ...analysis.outputDecision,
+            shouldOutput: result.shouldOutput,
+            type: result.outputType,
+            reason: result.outputReason
+          }
+        },
+        repository: this.repository
+      });
+      result.deliveryMode = outputPlan.deliveryMode;
+      result.preferredPluginIds = outputPlan.preferredPluginIds;
+
+      if (result.shouldOutput && this.policy.canSendOutput()) {
         if (this.outputDispatcher) {
           await this.outputDispatcher({
-            type: analysis.outputDecision.type,
-            content: result
+            type: result.outputType,
+            content: result,
+            preferredPluginIds: outputPlan.preferredPluginIds
           });
         } else {
           this.repository.createOutputEvent({
             pluginId: "cli-output",
-            type: analysis.outputDecision.type,
+            type: result.outputType,
             content: result
           });
         }
@@ -199,4 +309,60 @@ export class AgentLoop {
       throw error;
     }
   }
+}
+
+function dedupeTags(...groups) {
+  return [...new Set(groups.flat().filter(Boolean))].slice(0, 12);
+}
+
+function buildMemorySummary(summary, memoryType) {
+  if (!memoryType) return summary;
+  if (summary.startsWith(`[${memoryType}]`)) return summary;
+  return `[${memoryType}] ${summary}`;
+}
+
+function shouldUseStrictSimilarity(memoryDecision) {
+  return memoryDecision.memoryType === "知识片段" || memoryDecision.actionHint === "create";
+}
+
+function chooseTaskType(normalizedInput, analysis) {
+  if (normalizedInput.taskType === "summarize_current") return "summarize_current";
+  if (normalizedInput.taskType === "reminder") return "reminder";
+  if (normalizedInput.taskType === "memory_query") return "memory_query";
+  if (normalizedInput.taskType === "memory_capture") return "memory_capture";
+  return analysis.taskType ?? normalizedInput.taskType;
+}
+
+function applyMemoryPolicy(normalizedInput, memoryDecision) {
+  if (normalizedInput.signals.containsMemoryCommand) {
+    return {
+      ...memoryDecision,
+      shouldRemember: true,
+      memoryType: memoryDecision.memoryType ?? "上下文总结",
+      reason: "user_explicitly_requested_memory",
+      actionHint: memoryDecision.actionHint === "skip" ? "create_or_update" : memoryDecision.actionHint
+    };
+  }
+
+  if (normalizedInput.taskType === "summarize_current" && normalizedInput.signals.hasLongFormContent) {
+    return {
+      ...memoryDecision,
+      shouldRemember: true,
+      memoryType: memoryDecision.memoryType === "上下文总结" ? "知识片段" : memoryDecision.memoryType,
+      reason: memoryDecision.reason ?? "long_form_content_has_reference_value",
+      actionHint: memoryDecision.actionHint === "skip" ? "create_or_update" : memoryDecision.actionHint
+    };
+  }
+
+  return memoryDecision;
+}
+
+function buildDecisionLabel(taskType, memoryDecision) {
+  const actions = [];
+  if (memoryDecision.shouldRemember) actions.push("remember");
+  if (taskType === "reminder") actions.push("schedule");
+  if (taskType === "summarize_current") actions.push("summarize_current");
+  if (taskType === "memory_query" || taskType === "query") actions.push("search_memory");
+  if (actions.length === 0) actions.push("capture");
+  return actions;
 }

@@ -49,4 +49,29 @@ if (!memories.includes("插件")) {
 }
 console.log("memory search: OK");
 
+const reminder = run(["input", "提醒我 10分钟后 回看 Neura 核心链路"]);
+if (!reminder.includes("任务类型: reminder") || !reminder.includes("定时任务:")) {
+  throw new Error("Expected reminder input to create a schedule");
+}
+console.log("reminder schedule: OK");
+
+const article = [
+  "帮我总结这段文章：",
+  "Neura 的核心价值不是插件数量，而是把任意输入变成可沉淀、可检索、可行动的个人上下文。",
+  "当用户丢进一个想法时，系统应该判断它是临时信息、长期记忆、提醒、当前内容整理，还是历史查询。",
+  "如果是文章或材料，应该先总结当前内容，再决定是否写入知识片段。",
+  "如果是历史问题，应该检索记忆并给出基于记录的答案。"
+].join("\n");
+const currentSummary = run(["input", article]);
+if (!currentSummary.includes("任务类型: summarize_current") || !currentSummary.includes("summarize_current")) {
+  throw new Error("Expected long summary request to summarize current input");
+}
+console.log("current summary: OK");
+
+const memoryQuery = run(["input", "之前有没有关于插件体系的记录？"]);
+if (!memoryQuery.includes("任务类型: memory_query") || !memoryQuery.includes("search_memory")) {
+  throw new Error("Expected history query to search memory");
+}
+console.log("memory query decision: OK");
+
 console.log("Smoke test passed");

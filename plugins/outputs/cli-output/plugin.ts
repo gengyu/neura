@@ -6,6 +6,7 @@ export default {
 
   async send({ content }) {
     const summary = content.summary ?? content.message ?? JSON.stringify(content);
-    console.log(`[Neura] ${summary}`);
+    const prefix = content.taskType ? `[Neura:${content.taskType}]` : "[Neura]";
+    console.log(`${prefix} ${summary}`);
   }
 };

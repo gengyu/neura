@@ -12,9 +12,10 @@ export class OutputDispatcher {
     const targets = preferredPluginIds
       ? this.plugins.filter((plugin) => preferredPluginIds.includes(plugin.id))
       : this.plugins;
+    const selectedTargets = targets.length > 0 ? targets : this.plugins.filter((plugin) => plugin.type === "file");
 
     const results = [];
-    for (const plugin of targets) {
+    for (const plugin of selectedTargets) {
       const event = this.repository.createOutputEvent({
         pluginId: plugin.id,
         type,

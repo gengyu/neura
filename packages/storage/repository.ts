@@ -560,6 +560,39 @@ export class Repository {
     }));
   }
 
+  clearCurrentAgentHistory() {
+    const agentId = this.getActiveAgentId();
+    const quotedAgentId = this.store.value(agentId);
+    const counts = this.store.query(`
+      SELECT
+        (SELECT COUNT(*) FROM input_events WHERE agent_id = ${quotedAgentId}) AS inputEvents,
+        (SELECT COUNT(*) FROM tasks WHERE agent_id = ${quotedAgentId}) AS tasks,
+        (SELECT COUNT(*) FROM memories WHERE agent_id = ${quotedAgentId}) AS memories,
+        (SELECT COUNT(*) FROM memory_vectors WHERE agent_id = ${quotedAgentId}) AS memoryVectors,
+        (SELECT COUNT(*) FROM output_events WHERE agent_id = ${quotedAgentId}) AS outputEvents,
+        (SELECT COUNT(*) FROM confirmation_requests WHERE agent_id = ${quotedAgentId}) AS approvals,
+        (SELECT COUNT(*) FROM schedules WHERE agent_id = ${quotedAgentId}) AS schedules,
+        (SELECT COUNT(*) FROM tool_calls WHERE agent_id = ${quotedAgentId}) AS toolCalls,
+        (SELECT COUNT(*) FROM logs WHERE agent_id = ${quotedAgentId}) AS logs;
+    `)[0];
+
+    for (const table of [
+      "input_events",
+      "tasks",
+      "memories",
+      "memory_vectors",
+      "output_events",
+      "confirmation_requests",
+      "schedules",
+      "tool_calls",
+      "logs"
+    ]) {
+      this.store.run(`DELETE FROM ${table} WHERE agent_id = ${quotedAgentId};`);
+    }
+
+    return { agentId, deleted: counts };
+  }
+
   log(level, type, message, metadata = {}) {
     const createdAt = nowIso();
     const agentId = this.getActiveAgentId();
