@@ -1,22 +1,38 @@
-export function buildCaptureResult({ normalizedInput, analysis, memoryAction, memory }) {
+export function buildCaptureResult({ normalizedInput, analysis, decision, memoryAction, memory, schedule = null, synthesis = null }) {
   const keyPoints = buildKeyPoints(analysis);
-  const actions = buildActions(normalizedInput, analysis);
+  const actions = [...new Set([
+    ...(synthesis?.actions ?? []),
+    ...buildActions(normalizedInput, analysis, decision)
+  ])].slice(0, 6);
   const title = buildResultTitle(normalizedInput, analysis);
 
   return {
     title,
-    summary: cleanSummary(analysis.summary),
-    keyPoints,
+    summary: cleanSummary(synthesis?.summary ?? analysis.summary),
+    keyPoints: synthesis?.bullets?.length ? synthesis.bullets : keyPoints,
     actions,
     tags: analysis.tags ?? [],
+    themes: synthesis?.themes ?? [],
     category: analysis.category,
     intent: analysis.intent,
+    taskType: decision.taskType,
+    decision: decision.actions,
     memory: {
-      remembered: Boolean(analysis.memoryDecision?.shouldRemember ?? analysis.remembered),
+      remembered: Boolean(decision.memoryDecision?.shouldRemember ?? analysis.remembered),
       action: memoryAction,
       id: memory?.id ?? null,
-      type: analysis.memoryDecision?.memoryType ?? analysis.memoryType ?? "上下文总结"
+      type: decision.memoryDecision?.memoryType ?? analysis.memoryType ?? "上下文总结",
+      reason: decision.memoryDecision?.reason ?? null
     },
+    schedule: schedule
+      ? {
+          id: schedule.id,
+          name: schedule.name,
+          runAt: schedule.runAt,
+          intervalMs: schedule.intervalMs,
+          status: schedule.status
+        }
+      : null,
     confidence: analysis.confidence
   };
 }
@@ -61,12 +77,14 @@ function buildKeyPoints(analysis) {
   return splitIntoPoints(analysis.summary).slice(0, 4);
 }
 
-function buildActions(normalizedInput, analysis) {
+function buildActions(normalizedInput, analysis, decision) {
   const text = `${normalizedInput.normalizedText}\n${analysis.summary}`;
   const actions = [];
 
-  if (analysis.taskType === "reminder" || normalizedInput.signals.containsReminderIntent) {
-    actions.push("把这条记录作为提醒线索继续跟进。");
+  if (decision?.schedulePlan) {
+    actions.push(`已创建提醒：${decision.schedulePlan.name}`);
+  } else if (analysis.taskType === "reminder" || normalizedInput.signals.containsReminderIntent) {
+    actions.push("这条输入像提醒，但还缺少可解析时间。");
   }
   if (normalizedInput.signals.containsActionRequest) {
     actions.push("按这条输入继续生成可执行方案或整理稿。");

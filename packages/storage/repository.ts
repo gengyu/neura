@@ -173,12 +173,88 @@ export class Repository {
     `);
   }
 
+  listCaptures(limit = 20, filters = {}) {
+    const queryLimit = hasCaptureFilters(filters) ? Math.max(Number(limit) * 5, 100) : limit;
+    return this.queryCaptures({ limit: queryLimit, filters }).slice(0, Number(limit));
+  }
+
+  getCapture(id) {
+    const captures = this.queryCaptures({
+      limit: 1,
+      filters: { includeArchived: true },
+      where: `(id = ${this.store.value(id)} OR input_event_id = ${this.store.value(id)})`
+    });
+    return captures[0] ?? null;
+  }
+
+  queryCaptures({ limit = 20, filters = {}, where = null } = {}) {
+    const clauses = [
+      `agent_id = ${this.store.value(this.getActiveAgentId())}`,
+      "type = 'agent_loop'",
+      "result IS NOT NULL"
+    ];
+    if (where) clauses.push(where);
+    const rows = this.store.query(`
+      SELECT id, input_event_id AS inputEventId, status, result, error, created_at AS createdAt, finished_at AS finishedAt
+      FROM tasks
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY created_at DESC
+      LIMIT ${Number(limit)};
+    `);
+    return rows.map((task) => {
+      const result = parseJson(task.result) ?? {};
+      return {
+        id: task.id,
+        inputEventId: task.inputEventId,
+        status: task.status,
+        error: task.error,
+        createdAt: task.createdAt,
+        finishedAt: task.finishedAt,
+        taskType: result.taskType,
+        decision: result.decision ?? [],
+        summary: result.capture?.summary ?? result.summary,
+        title: result.capture?.title ?? result.normalizedInput?.title ?? result.summary,
+        tags: result.tags ?? [],
+        archived: Boolean(result.capture?.archived ?? result.archived),
+        memory: result.capture?.memory ?? {
+          remembered: result.remembered,
+          action: result.memoryAction,
+          id: result.memoryId,
+          type: result.memoryType
+        },
+        schedule: result.capture?.schedule ?? result.schedule ?? null,
+        capture: result.capture ?? null,
+        result
+      };
+    }).filter((capture) => matchesCaptureFilters(capture, filters));
+  }
+
   finishTask(id, status, result, error = null) {
     this.store.run(`
       UPDATE tasks
       SET status = ${this.store.value(status)}, result = ${this.store.json(result)}, error = ${this.store.value(error)}, finished_at = ${this.store.value(nowIso())}
       WHERE id = ${this.store.value(id)};
     `);
+  }
+
+  updateCaptureArchived(id, archived) {
+    const capture = this.getCapture(id);
+    if (!capture) return null;
+    const result = {
+      ...capture.result,
+      archived: Boolean(archived),
+      capture: {
+        ...(capture.result?.capture ?? capture.capture ?? {}),
+        archived: Boolean(archived),
+        archivedAt: archived ? nowIso() : null
+      }
+    };
+    this.store.run(`
+      UPDATE tasks
+      SET result = ${this.store.json(result)}
+      WHERE id = ${this.store.value(capture.id)} AND agent_id = ${this.store.value(this.getActiveAgentId())};
+    `);
+    return this.getCapture(capture.id);
   }
 
   createMemory({ content, summary, tags, sourceInputId, importance, confidence }) {
@@ -234,6 +310,26 @@ export class Repository {
       sourceInputId,
       importance: nextImportance,
       confidence: nextConfidence,
+      updatedAt: now
+    };
+    this.upsertMemoryVector(memory);
+    return memory;
+  }
+
+  updateMemoryTags(id, tags) {
+    const existing = this.getMemory(id);
+    if (!existing) return null;
+    const normalizedTags = [...new Set((tags ?? []).map((tag) => String(tag).trim()).filter(Boolean))].slice(0, 12);
+    const now = nowIso();
+    this.store.run(`
+      UPDATE memories
+      SET tags = ${this.store.json(normalizedTags)},
+          updated_at = ${this.store.value(now)}
+      WHERE id = ${this.store.value(id)} AND agent_id = ${this.store.value(this.getActiveAgentId())};
+    `);
+    const memory = {
+      ...existing,
+      tags: normalizedTags,
       updatedAt: now
     };
     this.upsertMemoryVector(memory);
@@ -697,4 +793,29 @@ function mergeContent(existing, next) {
   if (existing === next || existing.includes(next)) return existing;
   if (next.includes(existing)) return next;
   return `${existing}\n\n${next}`;
+}
+
+function matchesCaptureFilters(capture, filters = {}) {
+  if (!filters.includeArchived && !filters.archived && capture.archived) return false;
+  if (filters.archived !== undefined && Boolean(capture.archived) !== Boolean(filters.archived)) return false;
+  if (filters.taskType && capture.taskType !== filters.taskType) return false;
+  if (filters.action && !(capture.decision ?? []).includes(filters.action)) return false;
+  if (filters.remembered !== undefined && Boolean(capture.memory?.remembered) !== Boolean(filters.remembered)) return false;
+  if (filters.scheduled !== undefined && Boolean(capture.schedule?.runAt) !== Boolean(filters.scheduled)) return false;
+  if (filters.tag && !(capture.tags ?? []).includes(filters.tag)) return false;
+  if (filters.query) {
+    const haystack = [
+      capture.title,
+      capture.summary,
+      ...(capture.tags ?? []),
+      capture.result?.answer,
+      capture.result?.normalizedInput?.title
+    ].filter(Boolean).join("\n").toLowerCase();
+    if (!haystack.includes(String(filters.query).toLowerCase())) return false;
+  }
+  return true;
+}
+
+function hasCaptureFilters(filters = {}) {
+  return Object.values(filters).some((value) => value !== undefined && value !== false && value !== "");
 }

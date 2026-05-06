@@ -1,4 +1,5 @@
 import { normalizeToText, tokenize } from "../memory/memory.ts";
+import { hasSchedulableReminderIntent } from "./reminder-intent.ts";
 
 export function normalizeInputEvent(inputEvent) {
   const content = inputEvent.content;
@@ -118,7 +119,7 @@ function deriveSignals(normalized) {
       /请|帮我|告诉我|总结|分析/.test(text),
     containsQuestion: /[?？]/.test(text),
     containsActionRequest: /请|帮我|执行|生成|整理|检查/.test(text),
-    containsReminderIntent: /提醒|稍后|待办|回头|todo/i.test(text),
+    containsReminderIntent: hasSchedulableReminderIntent(text),
     containsMemoryCommand: /记住|保存|存一下|加入记忆|记到|记录下来|帮我记/.test(text),
     asksHistoryLookup: /历史|以前|之前|上次|过去|记忆里|记录里|查找|搜索|找一下|有没有/.test(text),
     asksCurrentSummary: /总结|归纳|提炼|整理一下|概括|摘要|读完/.test(text),

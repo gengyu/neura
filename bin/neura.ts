@@ -34,12 +34,36 @@ inputs.command("list").description("列出最近输入").action(listInputs);
 const tasks = program.command("tasks").description("任务");
 tasks.command("list").description("列出最近任务").action(listTasks);
 
+const records = program.command("records").description("记录收件箱");
+records.command("list")
+  .description("列出最近整理结果")
+  .option("-n, --limit <number>", "数量", "12")
+  .option("--type <taskType>", "按任务类型筛选，例如 memory_query、summarize_current")
+  .option("--action <action>", "按决策动作筛选，例如 remember、schedule、search_memory")
+  .option("--tag <tag>", "按标签筛选")
+  .option("--query <text>", "按标题、摘要、标签搜索")
+  .option("--remembered", "只看已写入记忆的记录")
+  .option("--scheduled", "只看已创建提醒的记录")
+  .option("--archived", "只看已归档记录")
+  .option("--all", "包含已归档记录")
+  .action(listRecords);
+records.command("show").description("查看单条整理结果详情").argument("<id>", "输入 ID 或任务 ID").action(showRecord);
+records.command("archive").description("归档一条整理结果").argument("<id>", "输入 ID 或任务 ID").action((id) => updateRecordArchive(id, true));
+records.command("unarchive").description("取消归档一条整理结果").argument("<id>", "输入 ID 或任务 ID").action((id) => updateRecordArchive(id, false));
+
 const history = program.command("history").description("历史数据");
 history.command("clear").description("清空当前 Agent 的输入、记忆、任务、输出和日志").option("--yes", "跳过确认").action(clearHistory);
 
 const memory = program.command("memory").description("记忆");
 memory.command("list").description("列出记忆").action(listMemories);
 memory.command("search").description("搜索记忆").argument("<query...>", "搜索词").action(searchMemories);
+memory.command("tag")
+  .description("更新记忆标签")
+  .argument("<memoryId>", "记忆 ID")
+  .option("--set <tags...>", "替换为这些标签")
+  .option("--add <tags...>", "追加这些标签")
+  .option("--remove <tags...>", "移除这些标签")
+  .action(updateMemoryTags);
 memory.command("reindex").description("重建记忆向量索引").action(reindexMemories);
 program.command("review").description("整理最近记录或某个主题").argument("[query...]", "可选主题").action(review);
 
@@ -259,6 +283,92 @@ async function listTasks() {
   }
 }
 
+async function listRecords(options = {}) {
+  const runtime = await createRuntime();
+  const captures = runtime.repository.listCaptures(Number(options.limit ?? 12), {
+    taskType: options.type,
+    action: options.action,
+    tag: options.tag,
+    query: options.query,
+    remembered: options.remembered ? true : undefined,
+    scheduled: options.scheduled ? true : undefined,
+    archived: options.archived ? true : undefined,
+    includeArchived: options.all ? true : undefined
+  });
+  if (captures.length === 0) return console.log("还没有整理结果。");
+  for (const item of captures) {
+    console.log(`${item.inputEventId}`);
+    console.log(`  标题: ${truncateLine(item.title, 80)}`);
+    console.log(`  类型: ${item.taskType}`);
+    console.log(`  决策: ${(item.decision ?? []).join(", ") || "capture"}`);
+    console.log(`  摘要: ${truncateLine(item.summary, 120)}`);
+    if (item.memory?.remembered) {
+      console.log(`  记忆: ${formatMemoryAction(item.memory.action)}${item.memory.id ? ` (${item.memory.id})` : ""}`);
+    }
+    if (item.schedule?.runAt) {
+      console.log(`  提醒: ${item.schedule.runAt}`);
+    }
+    if (item.archived) console.log("  状态: 已归档");
+    console.log(`  时间: ${item.createdAt}`);
+  }
+}
+
+async function showRecord(id) {
+  const runtime = await createRuntime();
+  const item = runtime.repository.getCapture(id);
+  if (!item) return console.log(`没有找到记录: ${id}`);
+  const capture = item.capture ?? {};
+
+  console.log(`${item.inputEventId}`);
+  console.log(`标题: ${capture.title ?? item.title}`);
+  console.log(`类型: ${item.taskType}`);
+  console.log(`决策: ${(item.decision ?? []).join(", ") || "capture"}`);
+  console.log(`状态: ${item.archived ? "已归档" : "未归档"}`);
+  console.log(`时间: ${item.createdAt}`);
+  console.log("");
+  console.log(capture.summary ?? item.summary);
+
+  if (Array.isArray(capture.keyPoints) && capture.keyPoints.length > 0) {
+    console.log("");
+    console.log("关键点:");
+    for (const point of capture.keyPoints.slice(0, 8)) {
+      console.log(`  - ${point}`);
+    }
+  }
+
+  if (Array.isArray(capture.actions) && capture.actions.length > 0) {
+    console.log("");
+    console.log("下一步:");
+    for (const action of capture.actions.slice(0, 8)) {
+      console.log(`  - ${action}`);
+    }
+  }
+
+  console.log("");
+  console.log(`标签: ${(item.tags ?? []).join(", ") || "无"}`);
+  if (item.memory?.remembered) {
+    console.log(`记忆: ${formatMemoryAction(item.memory.action)} ${item.memory.type ?? ""}${item.memory.id ? ` (${item.memory.id})` : ""}`.trim());
+  } else {
+    console.log("记忆: 未写入");
+  }
+  if (item.schedule?.runAt) {
+    console.log(`提醒: ${item.schedule.runAt}${item.schedule.intervalMs ? ` every ${formatDuration(item.schedule.intervalMs)}` : ""}`);
+  }
+  if (Array.isArray(item.relatedMemoryIds) && item.relatedMemoryIds.length > 0) {
+    console.log(`相关记忆: ${item.relatedMemoryIds.join(", ")}`);
+  } else if (Array.isArray(item.result?.relatedMemoryIds) && item.result.relatedMemoryIds.length > 0) {
+    console.log(`相关记忆: ${item.result.relatedMemoryIds.join(", ")}`);
+  }
+}
+
+async function updateRecordArchive(id, archived) {
+  const runtime = await createRuntime();
+  const item = runtime.repository.updateCaptureArchived(id, archived);
+  if (!item) return console.log(`没有找到记录: ${id}`);
+  console.log(`${archived ? "已归档" : "已取消归档"}: ${item.inputEventId}`);
+  console.log(`标题: ${truncateLine(item.title, 80)}`);
+}
+
 async function clearHistory(options = {}) {
   if (!options.yes) {
     console.log("这是破坏性操作：会清空当前 Agent 的输入、记忆、任务、输出、审批、定时、工具调用和日志。");
@@ -298,6 +408,32 @@ async function searchMemories(queryParts) {
     console.log(`  标签: ${memory.tags.join(", ")}`);
     console.log(`  内容: ${memory.content}`);
   }
+}
+
+async function updateMemoryTags(memoryId, options = {}) {
+  const runtime = await createRuntime();
+  const memory = runtime.repository.getMemory(memoryId);
+  if (!memory) return console.log(`没有找到记忆: ${memoryId}`);
+
+  let nextTags = memory.tags ?? [];
+  if (Array.isArray(options.set) && options.set.length > 0) {
+    nextTags = options.set;
+  }
+  if (Array.isArray(options.add) && options.add.length > 0) {
+    nextTags = [...nextTags, ...options.add];
+  }
+  if (Array.isArray(options.remove) && options.remove.length > 0) {
+    const removeSet = new Set(options.remove);
+    nextTags = nextTags.filter((tag) => !removeSet.has(tag));
+  }
+  if (!options.set && !options.add && !options.remove) {
+    console.log(`当前标签: ${(memory.tags ?? []).join(", ") || "无"}`);
+    return;
+  }
+
+  const updated = runtime.repository.updateMemoryTags(memoryId, nextTags);
+  console.log(`已更新记忆标签: ${updated.id}`);
+  console.log(`标签: ${updated.tags.join(", ") || "无"}`);
 }
 
 async function reindexMemories() {
@@ -511,4 +647,9 @@ function formatDuration(value) {
   if (value % 60_000 === 0) return `${value / 60_000}m`;
   if (value % 1000 === 0) return `${value / 1000}s`;
   return `${value}ms`;
+}
+
+function truncateLine(value, maxLength) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
 }
