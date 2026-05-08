@@ -1,4 +1,5 @@
 import { normalizeToText } from "../memory/memory.ts";
+import { SOURCE_TYPES } from "../shared/types.ts";
 
 export function writeMemoryForDecision({
   repository,
@@ -70,6 +71,8 @@ function buildMemoryPayload({ inputEvent, normalizedInput, analysis, memoryDecis
     summary: buildMemorySummary(summary, memoryDecision.memoryType),
     tags: dedupeTags(analysis.tags, synthesis?.themes, memoryDecision.memoryType, analysis.category),
     sourceInputId: inputEvent.id,
+    sourceType: SOURCE_TYPES.INPUT_EVENT,
+    sourceId: inputEvent.id,
     importance: analysis.importance,
     confidence: analysis.confidence
   };

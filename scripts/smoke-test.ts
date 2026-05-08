@@ -1,10 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { RUNTIME_EVENT_TYPES, SOURCE_TYPES } from "../packages/shared/types.ts";
 
 const smokeDatabasePath = "data/neura-smoke-test.db";
+const approvalPath = "data/approval-smoke.txt";
+process.env.NEURA_MODEL_PROVIDER = process.env.NEURA_MODEL_PROVIDER || "mock";
+process.env.NEURA_DATABASE_PATH = process.env.NEURA_DATABASE_PATH || smokeDatabasePath;
+process.env.DOTENV_CONFIG_QUIET = process.env.DOTENV_CONFIG_QUIET || "true";
 
 if (existsSync(smokeDatabasePath)) {
   unlinkSync(smokeDatabasePath);
+}
+if (existsSync(approvalPath)) {
+  unlinkSync(approvalPath);
 }
 
 function run(args) {
@@ -12,8 +20,8 @@ function run(args) {
     encoding: "utf8",
     env: {
       ...process.env,
-      NEURA_MODEL_PROVIDER: process.env.NEURA_MODEL_PROVIDER || "mock",
-      NEURA_DATABASE_PATH: process.env.NEURA_DATABASE_PATH || smokeDatabasePath
+      NEURA_MODEL_PROVIDER: process.env.NEURA_MODEL_PROVIDER,
+      NEURA_DATABASE_PATH: process.env.NEURA_DATABASE_PATH
     }
   });
 }
@@ -43,6 +51,12 @@ if (!duplicateInput.includes("记忆动作: 更新")) {
 }
 console.log("memory dedup: OK");
 
+const outputsAfterCapture = run(["outputs", "list"]);
+if (!outputsAfterCapture.includes("还没有输出事件")) {
+  throw new Error("Expected ordinary memory capture to avoid creating output events");
+}
+console.log("input without output: OK");
+
 const memoryId = duplicateInput.match(/记忆 ID: (memory_[^\n]+)/)?.[1];
 if (!memoryId) {
   throw new Error("Expected duplicate input to print memory id");
@@ -57,6 +71,9 @@ const memories = run(["memory", "search", "插件体系"]);
 if (!memories.includes("插件") || !memories.includes("产品核心")) {
   throw new Error("Expected memory search to return plugin-related memory");
 }
+if (!memories.includes("来源: input_event")) {
+  throw new Error("Expected memories to show input_event source");
+}
 console.log("memory search: OK");
 
 const reminder = run(["input", "提醒我 10分钟后 回看 Neura 核心链路"]);
@@ -70,6 +87,57 @@ if (!naturalReminder.includes("任务类型: reminder") || !naturalReminder.incl
   throw new Error("Expected natural language reminder to create a schedule");
 }
 console.log("natural reminder schedule: OK");
+
+const pastRunAt = new Date(Date.now() - 1000).toISOString();
+const dueSchedule = run(["schedules", "add", "--mode", "reminder", "--at", pastRunAt, "到期提醒 smoke test"]);
+const dueScheduleId = dueSchedule.match(/已创建定时任务: (schedule_[^\n]+)/)?.[1];
+if (!dueScheduleId) {
+  throw new Error("Expected direct schedule command to create a schedule");
+}
+const dueRun = run(["schedules", "run-due"]);
+if (!dueRun.includes("已处理到期定时任务: 1") || !dueRun.includes(dueScheduleId)) {
+  throw new Error("Expected due reminder schedule to be processed");
+}
+const outputsAfterSchedule = run(["outputs", "list"]);
+if (!outputsAfterSchedule.includes("来源: schedule") || !outputsAfterSchedule.includes(dueScheduleId)) {
+  throw new Error("Expected due schedule to create output events with schedule source");
+}
+console.log("schedule output source: OK");
+
+writeFileSync(approvalPath, "before approval");
+const { createRuntime } = await import("../packages/core/runtime.ts");
+const runtime = await createRuntime();
+const approvalResult = await runtime.tools.writeFile(approvalPath, "after approval");
+if (!approvalResult.confirmationRequired || !approvalResult.requestId) {
+  throw new Error("Expected overwriting an existing file to require approval");
+}
+await new Promise((resolve) => setTimeout(resolve, 100));
+const approvalTasks = run(["tasks", "list"]);
+if (!approvalTasks.includes("来源: approval") || !approvalTasks.includes(approvalResult.requestId)) {
+  throw new Error("Expected approval request to create an approval-sourced task");
+}
+const outputsAfterApproval = run(["outputs", "list"]);
+if (!outputsAfterApproval.includes("来源: approval") || !outputsAfterApproval.includes(approvalResult.requestId)) {
+  throw new Error("Expected approval request to create output events with approval source");
+}
+if (existsSync(approvalPath)) {
+  unlinkSync(approvalPath);
+}
+console.log("approval output source: OK");
+
+await runtime.emitOutput(
+  { sourceType: SOURCE_TYPES.MANUAL, sourceId: "smoke-manual", eventType: RUNTIME_EVENT_TYPES.MANUAL_OUTPUT, outputType: "status_report" },
+  { summary: "manual smoke output", message: "manual smoke output" }
+);
+const outputsAfterManual = run(["outputs", "list"]);
+if (!outputsAfterManual.includes("来源: manual") || !outputsAfterManual.includes("smoke-manual")) {
+  throw new Error("Expected manual Runtime output to create output events with manual source");
+}
+const manualTasks = run(["tasks", "list"]);
+if (!manualTasks.includes("来源: manual") || !manualTasks.includes("smoke-manual")) {
+  throw new Error("Expected manual Runtime output to create a manual-sourced task");
+}
+console.log("manual output source: OK");
 
 const article = [
   "帮我总结这段文章：",

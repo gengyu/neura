@@ -1,6 +1,7 @@
 import chokidar from "chokidar";
 import { mkdirSync, readFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
+import { PLUGIN_STATUSES } from "../../../packages/shared/types.ts";
 
 export default {
   id: "folder-watch-input",
@@ -46,14 +47,14 @@ export default {
     });
 
     watcher.on("error", (error) => {
-      runtime.repository.setPluginStatus("folder-watch-input", "error");
+      runtime.repository.setPluginStatus("folder-watch-input", PLUGIN_STATUSES.ERROR);
       runtime.repository.log("error", "folder-watch", "Folder watch input failed", {
         path: inboxPath,
         error: error instanceof Error ? error.message : String(error)
       });
     });
 
-    runtime.repository.setPluginStatus("folder-watch-input", "running");
+    runtime.repository.setPluginStatus("folder-watch-input", PLUGIN_STATUSES.RUNNING);
     runtime.repository.log("info", "folder-watch", "Folder watch input started", { path: inboxPath });
 
     return async () => {

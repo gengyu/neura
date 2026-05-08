@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import { z } from "zod";
+import { PLUGIN_STATUSES } from "../../../packages/shared/types.ts";
 
 const WebhookPayloadSchema = z.object({
   type: z.string().optional(),
@@ -52,7 +53,7 @@ export default {
     app.post("/webhook", handleInput);
 
     await app.listen({ host: options.host, port: options.port });
-    runtime.repository.setPluginStatus("webhook-input", "running");
+    runtime.repository.setPluginStatus("webhook-input", PLUGIN_STATUSES.RUNNING);
     runtime.repository.log("info", "webhook", "Webhook input started", { host: options.host, port: options.port });
 
     return async () => {

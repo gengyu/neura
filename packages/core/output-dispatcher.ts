@@ -1,3 +1,5 @@
+import { OUTPUT_STATUSES, SOURCE_TYPES } from "../shared/types.ts";
+
 export class OutputDispatcher {
   constructor({ repository, plugins }) {
     this.repository = repository;
@@ -8,7 +10,7 @@ export class OutputDispatcher {
     this.plugins = plugins.filter((plugin) => plugin.direction === "output" && plugin._enabled);
   }
 
-  async send({ type, content, preferredPluginIds = null }) {
+  async send({ type, content, sourceType = SOURCE_TYPES.INTERNAL, sourceId = null, preferredPluginIds = null }) {
     const targets = preferredPluginIds
       ? this.plugins.filter((plugin) => preferredPluginIds.includes(plugin.id))
       : this.plugins;
@@ -18,19 +20,21 @@ export class OutputDispatcher {
     for (const plugin of selectedTargets) {
       const event = this.repository.createOutputEvent({
         pluginId: plugin.id,
+        sourceType,
+        sourceId,
         type,
         content,
-        status: "pending"
+        status: OUTPUT_STATUSES.PENDING
       });
 
       try {
         if (typeof plugin.send === "function") {
           await plugin.send({ event, content, type, repository: this.repository });
         }
-        this.repository.updateOutputEventStatus(event.id, "sent", content);
-        results.push({ pluginId: plugin.id, status: "sent", eventId: event.id });
+        this.repository.updateOutputEventStatus(event.id, OUTPUT_STATUSES.SENT, content);
+        results.push({ pluginId: plugin.id, status: OUTPUT_STATUSES.SENT, eventId: event.id });
       } catch (error) {
-        this.repository.updateOutputEventStatus(event.id, "failed", {
+        this.repository.updateOutputEventStatus(event.id, OUTPUT_STATUSES.FAILED, {
           ...content,
           error: error instanceof Error ? error.message : String(error)
         });
@@ -40,7 +44,7 @@ export class OutputDispatcher {
         });
         results.push({
           pluginId: plugin.id,
-          status: "failed",
+          status: OUTPUT_STATUSES.FAILED,
           eventId: event.id,
           error: error instanceof Error ? error.message : String(error)
         });

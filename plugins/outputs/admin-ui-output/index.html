@@ -326,6 +326,22 @@
         ["logs", "日志", "errors"],
         ["tools", "工具", "tools"]
       ];
+      const runtimeStatuses = {
+        running: "running"
+      };
+      const pluginStatuses = {
+        running: "running",
+        error: "error"
+      };
+      const approvalStatuses = {
+        pending: "pending",
+        approved: "approved",
+        rejected: "rejected"
+      };
+      const scheduleStatuses = {
+        active: "active",
+        paused: "paused"
+      };
       let current = localStorage.getItem("neura-admin-tab") || "dashboard";
       let lastStatus = null;
       let lastAgents = { agents: [], activeAgent: null };
@@ -389,7 +405,7 @@
 
       function renderHeader(status, agents) {
         const runtime = status.runtime?.value ?? {};
-        const running = runtime.status === "running";
+        const running = runtime.status === runtimeStatuses.running;
         const pill = document.querySelector("#runtimePill");
         pill.className = `pill ${running ? "ok" : "warn"}`;
         pill.textContent = running ? "运行中" : "未运行";
@@ -410,8 +426,8 @@
           if (current === "agents") await renderAgents();
           if (current === "plugins") await renderPlugins();
           if (current === "memories") await renderMemories();
-          if (current === "tasks") await renderCollection("任务", "/api/tasks", ["id", "type", "status", "createdAt", "error"]);
-          if (current === "outputs") await renderCollection("输出", "/api/outputs", ["pluginId", "type", "status", "createdAt"]);
+          if (current === "tasks") await renderCollection("任务", "/api/tasks", ["id", "sourceType", "sourceId", "type", "status", "createdAt", "error"]);
+          if (current === "outputs") await renderCollection("输出", "/api/outputs", ["pluginId", "sourceType", "sourceId", "type", "status", "createdAt"]);
           if (current === "approvals") await renderApprovals();
           if (current === "schedules") await renderSchedules();
           if (current === "logs") await renderCollection("日志", "/api/logs", ["level", "type", "message", "createdAt"]);
@@ -553,7 +569,7 @@
           document.querySelector("#pluginTable").innerHTML = renderTable(["id", "name", "direction", "type", "status", "enabled", "action"], filtered.map((row) => ({
             ...row,
             enabled: statusPill(row.enabled ? "是" : "否", row.enabled ? "ok" : "warn"),
-            status: statusPill(row.status, row.status === "error" ? "bad" : row.status === "running" ? "ok" : "warn"),
+            status: statusPill(row.status, row.status === pluginStatuses.error ? "bad" : row.status === pluginStatuses.running ? "ok" : "warn"),
             action: `<button class="btn" data-plugin="${escapeHtml(row.id)}" data-enabled="${row.enabled ? "false" : "true"}">${row.enabled ? "禁用" : "启用"}</button>`
           })));
           bindDetailButtons(filtered);
@@ -592,7 +608,7 @@
 
         async function load(query = "") {
           const rows = await api(`/api/memories${query ? `?query=${encodeURIComponent(query)}` : ""}`);
-          document.querySelector("#memoryTable").innerHTML = renderTable(["summary", "tags", "importance", "confidence", "vectorScore", "updatedAt"], rows.map((row) => ({
+          document.querySelector("#memoryTable").innerHTML = renderTable(["summary", "tags", "sourceType", "sourceId", "importance", "confidence", "vectorScore", "updatedAt"], rows.map((row) => ({
             ...row,
             tags: row.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join(""),
             vectorScore: row.vectorScore === undefined ? "" : Number(row.vectorScore).toFixed(3)
@@ -605,9 +621,9 @@
         const rows = await api("/api/approvals");
         view.innerHTML = `<div class="view-head"><h2>审批</h2></div>${renderTable(["id", "toolName", "status", "reason", "createdAt", "action"], rows.map((row) => ({
           ...row,
-          status: statusPill(row.status, row.status === "pending" ? "warn" : row.status === "approved" ? "ok" : "bad"),
-          action: row.status === "pending"
-            ? `<button class="btn primary" data-approval="${escapeHtml(row.id)}" data-resolution="approved">批准</button> <button class="btn danger" data-approval="${escapeHtml(row.id)}" data-resolution="rejected">拒绝</button>`
+          status: statusPill(row.status, row.status === approvalStatuses.pending ? "warn" : row.status === approvalStatuses.approved ? "ok" : "bad"),
+          action: row.status === approvalStatuses.pending
+            ? `<button class="btn primary" data-approval="${escapeHtml(row.id)}" data-resolution="${approvalStatuses.approved}">批准</button> <button class="btn danger" data-approval="${escapeHtml(row.id)}" data-resolution="${approvalStatuses.rejected}">拒绝</button>`
             : ""
         })))}`;
         bindDetailButtons(rows);
@@ -652,11 +668,11 @@
           <div style="height:14px"></div>
           ${renderTable(["name", "mode", "status", "runAt", "intervalMs", "action"], rows.map((row) => ({
             ...row,
-            status: statusPill(row.status, row.status === "active" ? "ok" : row.status === "paused" ? "warn" : "bad"),
+            status: statusPill(row.status, row.status === scheduleStatuses.active ? "ok" : row.status === scheduleStatuses.paused ? "warn" : "bad"),
             intervalMs: row.intervalMs ? formatDuration(row.intervalMs) : "",
-            action: `${row.status === "active"
-              ? `<button class="btn" data-schedule-status="${escapeHtml(row.id)}" data-status="paused">暂停</button>`
-              : `<button class="btn" data-schedule-status="${escapeHtml(row.id)}" data-status="active">恢复</button>`}
+            action: `${row.status === scheduleStatuses.active
+              ? `<button class="btn" data-schedule-status="${escapeHtml(row.id)}" data-status="${scheduleStatuses.paused}">暂停</button>`
+              : `<button class="btn" data-schedule-status="${escapeHtml(row.id)}" data-status="${scheduleStatuses.active}">恢复</button>`}
               <button class="btn danger" data-schedule-delete="${escapeHtml(row.id)}">删除</button>`
           })))}
         `;

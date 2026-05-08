@@ -4,7 +4,7 @@ import { PermissionPolicy } from "../policy/policy.ts";
 import { loadPlugins } from "../plugin-sdk/loader.ts";
 import { Repository } from "../storage/repository.ts";
 import { SQLiteStore } from "../storage/sqlite.ts";
-import { RUNTIME_STATUSES } from "../shared/types.ts";
+import { AGENT_STATUSES, PLUGIN_STATUSES, RUNTIME_EVENT_TYPES, RUNTIME_STATUSES, SOURCE_TYPES, TASK_STATUSES } from "../shared/types.ts";
 import { loadLocalEnv } from "../shared/env.ts";
 import { createModelProvider } from "../model/provider.ts";
 import { ToolRegistry } from "../tools/tools.ts";
@@ -12,6 +12,8 @@ import { AgentLoop } from "./agent-loop.ts";
 import { OutputDispatcher } from "./output-dispatcher.ts";
 import { synthesizeResult } from "./result-synthesizer.ts";
 import { ScheduleManager } from "./schedule-manager.ts";
+import { buildOutputDecision } from "./output-decision.ts";
+import { buildOutputRoute } from "./output-routing.ts";
 
 async function initializePlugins(repository, configPlugins) {
   const loaded = await loadPlugins();
@@ -26,7 +28,7 @@ async function initializePlugins(repository, configPlugins) {
     const override = overrideMap.get(plugin.id);
     const enabled = override?.enabled ?? true;
     const mergedConfig = { ...plugin.config, ...override?.config };
-    repository.upsertPlugin({ ...plugin, enabled, config: mergedConfig }, enabled ? "enabled" : "disabled");
+    repository.upsertPlugin({ ...plugin, enabled, config: mergedConfig }, enabled ? PLUGIN_STATUSES.ENABLED : PLUGIN_STATUSES.DISABLED);
     plugin._enabled = enabled;
     plugin._mergedConfig = mergedConfig;
   }
@@ -55,8 +57,8 @@ export async function createRuntime() {
     }
     return modelProvider;
   };
-  const tools = new ToolRegistry({ repository, policy, getModelProvider });
   const outputDispatcher = new OutputDispatcher({ repository, plugins: loadedPlugins });
+  const tools = new ToolRegistry({ repository, policy, getModelProvider, outputDispatcher });
   const pluginCleanups = new Map();
   const pluginMap = new Map(loadedPlugins.map((plugin) => [plugin.id, plugin]));
   let runtime;
@@ -64,8 +66,7 @@ export async function createRuntime() {
     repository,
     policy,
     getModelProvider,
-    tools,
-    outputDispatcher: (event) => outputDispatcher.send(event)
+    tools
   });
   const scheduleManager = new ScheduleManager({
     repository,
@@ -136,7 +137,7 @@ export async function createRuntime() {
       if (!plugin) throw new Error(`Plugin not found: ${pluginId}`);
       if (pluginCleanups.has(pluginId)) return false;
       if (typeof plugin.init !== "function") {
-        repository.setPluginStatus(pluginId, "enabled");
+        repository.setPluginStatus(pluginId, PLUGIN_STATUSES.ENABLED);
         return true;
       }
 
@@ -145,10 +146,10 @@ export async function createRuntime() {
         if (typeof cleanup === "function") {
           pluginCleanups.set(pluginId, cleanup);
         }
-        repository.setPluginStatus(pluginId, "running");
+        repository.setPluginStatus(pluginId, PLUGIN_STATUSES.RUNNING);
         return true;
       } catch (error) {
-        repository.setPluginStatus(pluginId, "error");
+        repository.setPluginStatus(pluginId, PLUGIN_STATUSES.ERROR);
         repository.log("error", "runtime", `Failed to init plugin ${plugin.id}`, {
           error: error instanceof Error ? error.message : String(error)
         });
@@ -163,10 +164,10 @@ export async function createRuntime() {
       pluginCleanups.delete(pluginId);
       try {
         await cleanup();
-        repository.setPluginStatus(pluginId, repository.isPluginEnabled(pluginId) ? "enabled" : "disabled");
+        repository.setPluginStatus(pluginId, repository.isPluginEnabled(pluginId) ? PLUGIN_STATUSES.ENABLED : PLUGIN_STATUSES.DISABLED);
         return true;
       } catch (error) {
-        repository.setPluginStatus(pluginId, "error");
+        repository.setPluginStatus(pluginId, PLUGIN_STATUSES.ERROR);
         repository.log("error", "runtime", `Failed to cleanup plugin ${pluginId}`, {
           error: error instanceof Error ? error.message : String(error)
         });
@@ -193,7 +194,7 @@ export async function createRuntime() {
     },
 
     markRunning(pid = process.pid) {
-      repository.setAgentStatus(repository.getActiveAgentId(), "running");
+      repository.setAgentStatus(repository.getActiveAgentId(), AGENT_STATUSES.RUNNING);
       repository.setRuntimeState("runtime", {
         status: RUNTIME_STATUSES.RUNNING,
         pid,
@@ -201,7 +202,7 @@ export async function createRuntime() {
         heartbeatAt: new Date().toISOString()
       });
       for (const plugin of repository.listPlugins()) {
-        if (plugin.enabled) repository.setPluginStatus(plugin.id, "running");
+        if (plugin.enabled) repository.setPluginStatus(plugin.id, PLUGIN_STATUSES.RUNNING);
       }
       repository.log("info", "runtime", "Runtime started", { pid });
     },
@@ -220,13 +221,54 @@ export async function createRuntime() {
       return scheduleManager.processDueSchedules(now);
     },
 
+    async emitOutput(source = {}, content = {}) {
+      const sourceType = source.sourceType ?? SOURCE_TYPES.MANUAL;
+      const sourceId = source.sourceId ?? null;
+      const task = repository.createTask({
+        sourceType,
+        sourceId,
+        type: source.eventType ?? source.type ?? RUNTIME_EVENT_TYPES.EMIT_OUTPUT
+      });
+      const decision = buildOutputDecision(source);
+      if (!decision.shouldOutput || !policy.canSendOutput()) {
+        repository.finishTask(task.id, TASK_STATUSES.COMPLETED, {
+          outputDecision: decision,
+          outputResults: []
+        });
+        return null;
+      }
+      const route = buildOutputRoute({
+        outputEvent: {
+          sourceType,
+          sourceId,
+          type: decision.outputType,
+          priority: decision.priority
+        },
+        decision,
+        repository
+      });
+      const results = await outputDispatcher.send({
+        type: decision.outputType,
+        sourceType,
+        sourceId,
+        content,
+        preferredPluginIds: route.preferredPluginIds
+      });
+      repository.finishTask(task.id, TASK_STATUSES.COMPLETED, {
+        outputDecision: decision,
+        outputRoute: route,
+        outputResults: results
+      });
+      return results;
+    },
+
     async dispatchOutput(event) {
       return outputDispatcher.send(event);
     },
 
-    markStopped(reason = "stopped") {
+    markStopped(reason = AGENT_STATUSES.STOPPED) {
       const current = repository.getRuntimeState("runtime")?.value ?? {};
-      repository.setAgentStatus(repository.getActiveAgentId(), "stopped");
+      repository.setAgentStatus(repository.getActiveAgentId(), AGENT_STATUSES.STOPPED);
       repository.setRuntimeState("runtime", {
         ...current,
         status: RUNTIME_STATUSES.STOPPED,
@@ -235,7 +277,7 @@ export async function createRuntime() {
         reason
       });
       for (const plugin of repository.listPlugins()) {
-        repository.setPluginStatus(plugin.id, plugin.enabled ? "enabled" : "disabled");
+        repository.setPluginStatus(plugin.id, plugin.enabled ? PLUGIN_STATUSES.ENABLED : PLUGIN_STATUSES.DISABLED);
       }
       repository.log("info", "runtime", "Runtime stopped", { reason });
     },

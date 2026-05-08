@@ -1,6 +1,7 @@
 import chokidar from "chokidar";
 import { mkdirSync } from "node:fs";
 import { extname, resolve } from "node:path";
+import { PLUGIN_STATUSES } from "../../../packages/shared/types.ts";
 
 export default {
   id: "screenshot-watch-input",
@@ -51,14 +52,14 @@ export default {
     });
 
     watcher.on("error", (error) => {
-      runtime.repository.setPluginStatus("screenshot-watch-input", "error");
+      runtime.repository.setPluginStatus("screenshot-watch-input", PLUGIN_STATUSES.ERROR);
       runtime.repository.log("error", "screenshot-watch", "Screenshot watch failed", {
         path: watchPath,
         error: error instanceof Error ? error.message : String(error)
       });
     });
 
-    runtime.repository.setPluginStatus("screenshot-watch-input", "running");
+    runtime.repository.setPluginStatus("screenshot-watch-input", PLUGIN_STATUSES.RUNNING);
     runtime.repository.log("info", "screenshot-watch", "Screenshot watch started", { path: watchPath });
 
     return async () => {

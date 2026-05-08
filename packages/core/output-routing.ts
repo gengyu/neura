@@ -1,10 +1,12 @@
-export function buildOutputPlan({ normalizedInput, analysis, repository }) {
+import { SOURCE_TYPES } from "../shared/types.ts";
+
+export function buildOutputRoute({ outputEvent = {}, decision = {}, repository }) {
   const enabledOutputs = repository
     .listPlugins()
     .filter((plugin) => plugin.direction === "output" && plugin.enabled);
 
   const idsByType = new Map(enabledOutputs.map((plugin) => [plugin.type, plugin.id]));
-  const preferredPluginIds = [];
+  const preferredPluginIds = [...(decision.preferredPluginIds ?? outputEvent.preferredPluginIds ?? [])];
 
   const addIfEnabled = (type) => {
     const id = idsByType.get(type);
@@ -13,29 +15,32 @@ export function buildOutputPlan({ normalizedInput, analysis, repository }) {
 
   addIfEnabled("file");
 
-  const taskType = analysis.taskType ?? normalizedInput.taskType;
+  const outputType = decision.outputType ?? outputEvent.type;
+  const sourceType = outputEvent.sourceType;
+  const priority = decision.priority ?? outputEvent.priority ?? "medium";
 
-  if (analysis.outputDecision.shouldOutput) {
-    if (normalizedInput.sourcePluginId === "cli-input") {
-      addIfEnabled("cli");
-    } else if (normalizedInput.sourcePluginId === "admin-ui-output") {
-      addIfEnabled("admin-ui");
-    } else if (normalizedInput.sourcePluginId === "webhook-input") {
-      addIfEnabled("admin-ui");
-      if (analysis.outputDecision.priority === "high") addIfEnabled("system-notification");
-    } else if (taskType === "reminder") {
-      addIfEnabled("system-notification");
-      addIfEnabled("cli");
-      addIfEnabled("admin-ui");
-    } else if (["query", "memory_query", "action_request", "summarize_current"].includes(taskType)) {
-      addIfEnabled("cli");
-      addIfEnabled("admin-ui");
-    } else if (analysis.outputDecision.priority === "high") {
-      addIfEnabled("system-notification");
-      addIfEnabled("admin-ui");
-    } else {
-      addIfEnabled("admin-ui");
-    }
+  if (sourceType === SOURCE_TYPES.SCHEDULE || outputType === "reminder") {
+    addIfEnabled("system-notification");
+    addIfEnabled("cli");
+    addIfEnabled("admin-ui");
+  } else if (sourceType === SOURCE_TYPES.APPROVAL || outputType === "confirmation_request") {
+    addIfEnabled("cli");
+    addIfEnabled("admin-ui");
+    addIfEnabled("system-notification");
+  } else if (sourceType === SOURCE_TYPES.MEMORY_REVIEW) {
+    addIfEnabled("admin-ui");
+    if (priority === "high") addIfEnabled("system-notification");
+  } else if (sourceType === SOURCE_TYPES.MANUAL) {
+    addIfEnabled("cli");
+    addIfEnabled("admin-ui");
+  } else if (sourceType === SOURCE_TYPES.RUNTIME_STATE) {
+    addIfEnabled("admin-ui");
+    if (priority === "high") addIfEnabled("system-notification");
+  } else if (outputType === "error" || priority === "high") {
+    addIfEnabled("system-notification");
+    addIfEnabled("admin-ui");
+  } else {
+    addIfEnabled("admin-ui");
   }
 
   return {

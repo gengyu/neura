@@ -63,6 +63,8 @@ export class SQLiteStore {
         id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL DEFAULT 'default-agent',
         input_event_id TEXT,
+        source_type TEXT NOT NULL DEFAULT 'input_event',
+        source_id TEXT,
         type TEXT NOT NULL,
         status TEXT NOT NULL,
         result TEXT,
@@ -77,6 +79,8 @@ export class SQLiteStore {
         summary TEXT NOT NULL,
         tags TEXT NOT NULL,
         source_input_id TEXT,
+        source_type TEXT NOT NULL DEFAULT 'input_event',
+        source_id TEXT,
         importance INTEGER NOT NULL,
         confidence REAL NOT NULL,
         created_at TEXT NOT NULL,
@@ -86,6 +90,8 @@ export class SQLiteStore {
         id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL DEFAULT 'default-agent',
         plugin_id TEXT NOT NULL,
+        source_type TEXT NOT NULL DEFAULT 'internal',
+        source_id TEXT,
         type TEXT NOT NULL,
         content TEXT NOT NULL,
         status TEXT NOT NULL,
@@ -153,8 +159,14 @@ export class SQLiteStore {
     }
     this.ensureColumn("input_events", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
     this.ensureColumn("tasks", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.ensureColumn("tasks", "source_type", "TEXT NOT NULL DEFAULT 'input_event'");
+    this.ensureColumn("tasks", "source_id", "TEXT");
     this.ensureColumn("memories", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.ensureColumn("memories", "source_type", "TEXT NOT NULL DEFAULT 'input_event'");
+    this.ensureColumn("memories", "source_id", "TEXT");
     this.ensureColumn("output_events", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.ensureColumn("output_events", "source_type", "TEXT NOT NULL DEFAULT 'internal'");
+    this.ensureColumn("output_events", "source_id", "TEXT");
     this.ensureColumn("tool_calls", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
     this.ensureColumn("confirmation_requests", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
     this.ensureColumn("schedules", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");

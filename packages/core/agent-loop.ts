@@ -1,6 +1,5 @@
-import { INPUT_STATUSES, TASK_STATUSES } from "../shared/types.ts";
+import { INPUT_STATUSES, SOURCE_TYPES, TASK_STATUSES } from "../shared/types.ts";
 import { normalizeInputEvent } from "./input-normalizer.ts";
-import { buildOutputPlan } from "./output-routing.ts";
 import { synthesizeCurrentInput, synthesizeResult } from "./result-synthesizer.ts";
 import { buildDecision } from "./decision-engine.ts";
 import { buildCaptureResult } from "./capture-result.ts";
@@ -98,16 +97,19 @@ const AVAILABLE_TOOLS = [
 ];
 
 export class AgentLoop {
-  constructor({ repository, policy, getModelProvider, tools, outputDispatcher }) {
+  constructor({ repository, policy, getModelProvider, tools }) {
     this.repository = repository;
     this.policy = policy;
     this.getModelProvider = getModelProvider;
     this.tools = tools;
-    this.outputDispatcher = outputDispatcher;
   }
 
   async process(inputEvent) {
-    const task = this.repository.createTask(inputEvent.id, "agent_loop");
+    const task = this.repository.createTask({
+      sourceType: SOURCE_TYPES.INPUT_EVENT,
+      sourceId: inputEvent.id,
+      type: "agent_loop"
+    });
     this.repository.updateInputEventStatus(inputEvent.id, INPUT_STATUSES.PROCESSING);
     this.repository.log("info", "input", "Input event accepted", { inputEventId: inputEvent.id, type: inputEvent.type });
 
@@ -142,7 +144,7 @@ export class AgentLoop {
       const remembered = Boolean(memoryDecision.shouldRemember);
 
       const result = {
-        status: "completed",
+        status: TASK_STATUSES.COMPLETED,
         provider: effectiveAnalysis.provider,
         taskType: decision.taskType,
         scenario: normalizedInput.scenario,
@@ -156,9 +158,15 @@ export class AgentLoop {
         memoryReason: memoryDecision.reason,
         memoryAction: "skipped",
         memoryId: null,
-        shouldOutput: decision.output.shouldOutput,
-        outputType: decision.output.type,
-        outputReason: decision.output.reason,
+        outputHint: {
+          shouldOutput: decision.output.shouldOutput,
+          type: decision.output.type,
+          reason: decision.output.reason,
+          priority: decision.output.priority
+        },
+        shouldOutput: false,
+        outputType: "none",
+        outputReason: "agent_loop_does_not_dispatch_output",
         importance: effectiveAnalysis.importance,
         confidence: effectiveAnalysis.confidence,
         extractedFacts: effectiveAnalysis.extractedFacts ?? [],
@@ -233,40 +241,6 @@ export class AgentLoop {
         schedule,
         synthesis
       });
-
-      const outputPlan = buildOutputPlan({
-        normalizedInput,
-        analysis: {
-          ...effectiveAnalysis,
-          taskType: result.taskType,
-          outputDecision: {
-            ...effectiveAnalysis.outputDecision,
-            shouldOutput: result.shouldOutput,
-            type: result.outputType,
-            reason: result.outputReason
-          }
-        },
-        repository: this.repository
-      });
-      result.deliveryMode = outputPlan.deliveryMode;
-      result.preferredPluginIds = outputPlan.preferredPluginIds;
-
-      if (result.shouldOutput && this.policy.canSendOutput()) {
-        if (this.outputDispatcher) {
-          await this.outputDispatcher({
-            type: result.outputType,
-            content: result,
-            preferredPluginIds: outputPlan.preferredPluginIds
-          });
-        } else {
-          this.repository.createOutputEvent({
-            pluginId: "cli-output",
-            type: result.outputType,
-            content: result
-          });
-        }
-        this.repository.log("info", "output", "Output event created", { inputEventId: inputEvent.id });
-      }
 
       this.repository.finishTask(task.id, TASK_STATUSES.COMPLETED, result);
       this.repository.updateInputEventStatus(inputEvent.id, INPUT_STATUSES.COMPLETED);

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { APPROVAL_STATUSES, PLUGIN_STATUSES, SCHEDULE_STATUSES } from "../../../packages/shared/types.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -25,7 +26,7 @@ const ActiveAgentSchema = z.object({
 });
 
 const ApprovalSchema = z.object({
-  resolution: z.enum(["approved", "rejected"])
+  resolution: z.enum([APPROVAL_STATUSES.APPROVED, APPROVAL_STATUSES.REJECTED])
 });
 
 const ScheduleSchema = z.object({
@@ -140,7 +141,7 @@ export default {
       });
     });
     app.post("/api/schedules/:id/status", async (request) => {
-      const body = z.object({ status: z.enum(["active", "paused", "completed"]) }).parse(request.body ?? {});
+      const body = z.object({ status: z.enum([SCHEDULE_STATUSES.ACTIVE, SCHEDULE_STATUSES.PAUSED, SCHEDULE_STATUSES.COMPLETED]) }).parse(request.body ?? {});
       runtime.repository.updateScheduleStatus(request.params.id, body.status);
       return { ok: true };
     });
@@ -150,7 +151,7 @@ export default {
     });
 
     await app.listen({ host: options.host, port: options.port });
-    runtime.repository.setPluginStatus(this.id, "running");
+    runtime.repository.setPluginStatus(this.id, PLUGIN_STATUSES.RUNNING);
     runtime.repository.log("info", "admin-ui", "Admin UI started", {
       host: options.host,
       port: options.port

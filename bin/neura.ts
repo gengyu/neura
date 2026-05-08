@@ -5,6 +5,7 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRuntime } from "../packages/core/runtime.ts";
+import { APPROVAL_STATUSES, RUNTIME_STATUSES, SCHEDULE_STATUSES, SOURCE_TYPES } from "../packages/shared/types.ts";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const pidFile = resolve(root, "data/neura.pid");
@@ -33,6 +34,9 @@ inputs.command("list").description("列出最近输入").action(listInputs);
 
 const tasks = program.command("tasks").description("任务");
 tasks.command("list").description("列出最近任务").action(listTasks);
+
+const outputs = program.command("outputs").description("输出事件");
+outputs.command("list").description("列出最近输出").action(listOutputs);
 
 const records = program.command("records").description("记录收件箱");
 records.command("list")
@@ -83,8 +87,8 @@ tools.command("list").description("列出工具调用").action(listTools);
 
 const approvals = program.command("approvals").description("高风险动作审批");
 approvals.command("list").description("列出审批请求").action(listApprovals);
-approvals.command("approve").description("批准一个审批请求").argument("<requestId>", "审批请求 ID").action((requestId) => resolveApproval(requestId, "approved"));
-approvals.command("reject").description("拒绝一个审批请求").argument("<requestId>", "审批请求 ID").action((requestId) => resolveApproval(requestId, "rejected"));
+approvals.command("approve").description("批准一个审批请求").argument("<requestId>", "审批请求 ID").action((requestId) => resolveApproval(requestId, APPROVAL_STATUSES.APPROVED));
+approvals.command("reject").description("拒绝一个审批请求").argument("<requestId>", "审批请求 ID").action((requestId) => resolveApproval(requestId, APPROVAL_STATUSES.REJECTED));
 
 const schedules = program.command("schedules").description("定时任务");
 schedules.command("list").description("列出定时任务").action(listSchedules);
@@ -97,9 +101,10 @@ schedules.command("add")
   .option("--every <duration>", "重复周期，例如 30m、1d")
   .argument("<text...>", "任务内容")
   .action(addSchedule);
-schedules.command("pause").description("暂停定时任务").argument("<scheduleId>", "任务 ID").action((scheduleId) => updateScheduleStatus(scheduleId, "paused"));
-schedules.command("resume").description("恢复定时任务").argument("<scheduleId>", "任务 ID").action((scheduleId) => updateScheduleStatus(scheduleId, "active"));
+schedules.command("pause").description("暂停定时任务").argument("<scheduleId>", "任务 ID").action((scheduleId) => updateScheduleStatus(scheduleId, SCHEDULE_STATUSES.PAUSED));
+schedules.command("resume").description("恢复定时任务").argument("<scheduleId>", "任务 ID").action((scheduleId) => updateScheduleStatus(scheduleId, SCHEDULE_STATUSES.ACTIVE));
 schedules.command("remove").description("删除定时任务").argument("<scheduleId>", "任务 ID").action(removeSchedule);
+schedules.command("run-due").description("立即处理到期定时任务").action(runDueSchedules);
 
 program.command("config").description("查看配置").action(showConfig);
 program.command("logs").description("查看最近日志").action(logs);
@@ -118,7 +123,7 @@ function isProcessAlive(pid) {
 }
 
 function isHeartbeatFresh(runtimeState) {
-  if (runtimeState?.status !== "running" || !runtimeState.heartbeatAt) return false;
+  if (runtimeState?.status !== RUNTIME_STATUSES.RUNNING || !runtimeState.heartbeatAt) return false;
   return Date.now() - Date.parse(runtimeState.heartbeatAt) < 15000;
 }
 
@@ -179,7 +184,7 @@ async function stop() {
 async function status() {
   const runtime = await createRuntime();
   const state = runtime.status();
-  const runtimeState = state.runtime?.value ?? { status: "stopped" };
+  const runtimeState = state.runtime?.value ?? { status: RUNTIME_STATUSES.STOPPED };
   const pid = readPid() ?? runtimeState.pid;
   const alive = isProcessAlive(pid) || isHeartbeatFresh(runtimeState);
   const connection =
@@ -275,11 +280,26 @@ async function listTasks() {
   if (tasks.length === 0) return console.log("还没有任务。");
   for (const task of tasks) {
     console.log(`${task.id}`);
-    console.log(`  输入: ${task.inputEventId}`);
+    console.log(`  来源: ${task.sourceType ?? SOURCE_TYPES.INPUT_EVENT}${task.sourceId ? ` (${task.sourceId})` : ""}`);
+    if (task.inputEventId) console.log(`  输入: ${task.inputEventId}`);
     console.log(`  类型: ${task.type}`);
     console.log(`  状态: ${task.status}`);
     console.log(`  创建时间: ${task.createdAt}`);
     if (task.error) console.log(`  错误: ${task.error}`);
+  }
+}
+
+async function listOutputs() {
+  const runtime = await createRuntime();
+  const outputs = runtime.repository.listOutputEvents();
+  if (outputs.length === 0) return console.log("还没有输出事件。");
+  for (const output of outputs) {
+    console.log(`${output.id}`);
+    console.log(`  插件: ${output.pluginId}`);
+    console.log(`  来源: ${output.sourceType ?? SOURCE_TYPES.INTERNAL}${output.sourceId ? ` (${output.sourceId})` : ""}`);
+    console.log(`  类型: ${output.type}`);
+    console.log(`  状态: ${output.status}`);
+    console.log(`  创建时间: ${output.createdAt}`);
   }
 }
 
@@ -394,6 +414,7 @@ async function listMemories() {
     console.log(`  摘要: ${memory.summary}`);
     console.log(`  标签: ${memory.tags.join(", ")}`);
     console.log(`  重要性: ${memory.importance}`);
+    console.log(`  来源: ${memory.sourceType ?? SOURCE_TYPES.INPUT_EVENT}${memory.sourceId ? ` (${memory.sourceId})` : ""}`);
     console.log(`  创建时间: ${memory.createdAt}`);
   }
 }
@@ -406,6 +427,7 @@ async function searchMemories(queryParts) {
     console.log(`${memory.id}`);
     console.log(`  摘要: ${memory.summary}`);
     console.log(`  标签: ${memory.tags.join(", ")}`);
+    console.log(`  来源: ${memory.sourceType ?? SOURCE_TYPES.INPUT_EVENT}${memory.sourceId ? ` (${memory.sourceId})` : ""}`);
     console.log(`  内容: ${memory.content}`);
   }
 }
@@ -541,7 +563,7 @@ async function listApprovals() {
 async function resolveApproval(requestId, resolution) {
   const runtime = await createRuntime();
   const resolved = runtime.tools.resolveConfirmation(requestId, resolution);
-  console.log(`审批已${resolution === "approved" ? "批准" : "拒绝"}: ${requestId}`);
+  console.log(`审批已${resolution === APPROVAL_STATUSES.APPROVED ? "批准" : "拒绝"}: ${requestId}`);
   if (resolved?.result?.output) console.log(resolved.result.output);
 }
 
@@ -582,13 +604,22 @@ async function addSchedule(textParts, options) {
 async function updateScheduleStatus(scheduleId, status) {
   const runtime = await createRuntime();
   runtime.repository.updateScheduleStatus(scheduleId, status);
-  console.log(`定时任务已${status === "active" ? "恢复" : "暂停"}: ${scheduleId}`);
+  console.log(`定时任务已${status === SCHEDULE_STATUSES.ACTIVE ? "恢复" : "暂停"}: ${scheduleId}`);
 }
 
 async function removeSchedule(scheduleId) {
   const runtime = await createRuntime();
   runtime.repository.deleteSchedule(scheduleId);
   console.log(`定时任务已删除: ${scheduleId}`);
+}
+
+async function runDueSchedules() {
+  const runtime = await createRuntime();
+  const results = await runtime.processDueSchedules(new Date());
+  console.log(`已处理到期定时任务: ${results.length}`);
+  for (const result of results) {
+    console.log(`${result.id} ${result.mode} ${result.completed ? SCHEDULE_STATUSES.COMPLETED : SCHEDULE_STATUSES.ACTIVE}`);
+  }
 }
 
 async function showConfig() {
