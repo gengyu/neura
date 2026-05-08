@@ -62,12 +62,7 @@ export async function createRuntime() {
   const pluginCleanups = new Map();
   const pluginMap = new Map(loadedPlugins.map((plugin) => [plugin.id, plugin]));
   let runtime;
-  const agentLoop = new AgentLoop({
-    repository,
-    policy,
-    getModelProvider,
-    tools
-  });
+  const agentLoop = new AgentLoop(repository, policy, getModelProvider, tools);
   const scheduleManager = new ScheduleManager({
     repository,
     outputDispatcher,

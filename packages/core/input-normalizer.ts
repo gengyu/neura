@@ -30,7 +30,7 @@ export function normalizeInputEvent(inputEvent) {
       likelyEphemeral: false,
       likelyDecision: false,
       likelyPreference: false
-    }
+    },
   };
 
   normalized.keywords = tokenize(`${normalized.title}\n${normalized.normalizedText}`).slice(0, 12);

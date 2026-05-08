@@ -97,12 +97,12 @@ const AVAILABLE_TOOLS = [
 ];
 
 export class AgentLoop {
-  constructor({ repository, policy, getModelProvider, tools }) {
-    this.repository = repository;
-    this.policy = policy;
-    this.getModelProvider = getModelProvider;
-    this.tools = tools;
-  }
+  constructor(
+      public repository,
+      public policy,
+      public getModelProvider,
+      public tools
+  ) {}
 
   async process(inputEvent) {
     const task = this.repository.createTask({
