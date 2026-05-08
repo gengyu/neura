@@ -105,6 +105,7 @@ export class AgentLoop {
   ) {}
 
   async process(inputEvent) {
+    // === TaskFinalize: 创建任务记录并更新状态 ===
     const task = this.repository.createTask({
       sourceType: SOURCE_TYPES.INPUT_EVENT,
       sourceId: inputEvent.id,
@@ -114,11 +115,15 @@ export class AgentLoop {
     this.repository.log("info", "input", "Input event accepted", { inputEventId: inputEvent.id, type: inputEvent.type });
 
     try {
+      // === Normalize: 标准化输入，统一格式并提取关键信息 ===
       const normalizedInput = normalizeInputEvent(inputEvent);
       const modelProvider = this.getModelProvider();
+      
+      // === Recall: 记忆召回，搜索相关历史记忆提供上下文 ===
       const contextMemories = this.repository.searchMemories(normalizedInput.memorySearchQuery, 5);
       const executeTool = this.tools
         ? async (name, input) => {
+            // ToolStep: 工具执行阶段的实际调用逻辑
             if (name === "search_memory") return this.tools.searchMemory(input.query);
             if (name === "read_file") return this.tools.readFile(input.path);
             if (name === "write_file") return this.tools.writeFile(input.path, input.content);
@@ -130,12 +135,14 @@ export class AgentLoop {
           }
         : undefined;
 
+      // === ToolStep: 调用模型分析输入，可能触发工具执行或 ApprovalPause（等待确认）===
       const analysis = await modelProvider.analyzeInput(
         inputEvent,
         { normalizedInput, relatedMemories: contextMemories },
         { tools: this.tools ? AVAILABLE_TOOLS : [], executeTool }
       );
 
+      // === MemoryDecision: 基于分析结果决定记忆策略（新增/更新/跳过）===
       const decision = buildDecision({ normalizedInput, analysis });
       const effectiveAnalysis = { ...analysis, taskType: decision.taskType };
       const { summary, tags } = effectiveAnalysis;
@@ -181,7 +188,9 @@ export class AgentLoop {
       };
 
       let synthesis = null;
+      // === MemorySynthesis: 根据决策模式合成记忆内容 ===
       if (decision.synthesisMode === "current_input") {
+        // 对当前输入进行摘要和结构化
         synthesis = await synthesizeCurrentInput({
           normalizedInput,
           analysis: effectiveAnalysis,
@@ -192,6 +201,7 @@ export class AgentLoop {
         result.themes = synthesis.themes;
         result.actions = synthesis.actions;
       } else if (decision.synthesisMode === "memory_answer") {
+        // 基于历史记忆回答问题
         synthesis = await synthesizeResult({
           mode: "answer",
           query: normalizedInput.normalizedText,
@@ -208,6 +218,7 @@ export class AgentLoop {
       }
 
       let schedule = null;
+      // 如果决策包含调度计划，创建定时任务
       if (decision.schedulePlan) {
         schedule = this.repository.createSchedule(decision.schedulePlan);
         result.schedule = {
@@ -221,6 +232,7 @@ export class AgentLoop {
         result.taskType = "reminder";
       }
 
+      // === MemoryWrite: 根据决策写入记忆（新增/更新/跳过）===
       const { memory, memoryAction } = writeMemoryForDecision({
         repository: this.repository,
         inputEvent,
@@ -232,6 +244,7 @@ export class AgentLoop {
       result.memoryAction = memoryAction;
       result.memoryId = memory?.id ?? null;
 
+      // 构建捕获结果，整合所有处理产物
       result.capture = buildCaptureResult({
         normalizedInput,
         analysis: effectiveAnalysis,
@@ -242,6 +255,7 @@ export class AgentLoop {
         synthesis
       });
 
+      // === TaskFinalize: 完成任务，更新状态 ===
       this.repository.finishTask(task.id, TASK_STATUSES.COMPLETED, result);
       this.repository.updateInputEventStatus(inputEvent.id, INPUT_STATUSES.COMPLETED);
       return result;
