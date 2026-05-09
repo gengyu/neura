@@ -1,9 +1,17 @@
 import { detectReminderPlan } from "./reminder-intent.ts";
+import type {
+  AnalysisResult,
+  DecisionResult,
+  MemoryDecision,
+  NormalizedInput,
+  OutputPolicy,
+  SchedulePlan
+} from "./types.ts";
 
-export function buildDecision({ normalizedInput, analysis }) {
+export function buildDecision({ normalizedInput, analysis }: { normalizedInput: NormalizedInput; analysis: AnalysisResult }): DecisionResult {
   const taskType = chooseTaskType(normalizedInput, analysis);
   const memoryDecision = applyMemoryPolicy(normalizedInput, taskType, analysis.memoryDecision ?? {
-    shouldRemember: analysis.remembered,
+    shouldRemember: Boolean(analysis.remembered),
     memoryType: "上下文总结",
     reason: "legacy_analysis",
     actionHint: analysis.remembered ? "create_or_update" : "skip"
@@ -23,7 +31,7 @@ export function buildDecision({ normalizedInput, analysis }) {
   };
 }
 
-function chooseTaskType(normalizedInput, analysis) {
+function chooseTaskType(normalizedInput: NormalizedInput, analysis: AnalysisResult): string {
   if (normalizedInput.taskType === "summarize_current") return "summarize_current";
   if (normalizedInput.taskType === "reminder") return "reminder";
   if (normalizedInput.taskType === "memory_query") return "memory_query";
@@ -34,7 +42,7 @@ function chooseTaskType(normalizedInput, analysis) {
   return analysis.taskType ?? normalizedInput.taskType;
 }
 
-function applyMemoryPolicy(normalizedInput, taskType, memoryDecision) {
+function applyMemoryPolicy(normalizedInput: NormalizedInput, taskType: string, memoryDecision: MemoryDecision): MemoryDecision {
   if (normalizedInput.signals.containsMemoryCommand) {
     return {
       ...memoryDecision,
@@ -67,8 +75,8 @@ function applyMemoryPolicy(normalizedInput, taskType, memoryDecision) {
   return memoryDecision;
 }
 
-function buildActions(taskType, memoryDecision, schedulePlan) {
-  const actions = [];
+function buildActions(taskType: string, memoryDecision: MemoryDecision, schedulePlan: SchedulePlan | null): string[] {
+  const actions: string[] = [];
   if (memoryDecision.shouldRemember) actions.push("remember");
   if (schedulePlan) actions.push("schedule");
   if (taskType === "summarize_current") actions.push("summarize_current");
@@ -77,13 +85,18 @@ function buildActions(taskType, memoryDecision, schedulePlan) {
   return actions;
 }
 
-function chooseSynthesisMode(taskType) {
+function chooseSynthesisMode(taskType: string): string {
   if (taskType === "summarize_current") return "current_input";
   if (["query", "memory_query", "action_request"].includes(taskType)) return "memory_answer";
   return "none";
 }
 
-function chooseOutputPolicy(normalizedInput, analysis, taskType, schedulePlan) {
+function chooseOutputPolicy(
+  normalizedInput: NormalizedInput,
+  analysis: AnalysisResult,
+  taskType: string,
+  schedulePlan: SchedulePlan | null
+): OutputPolicy {
   if (schedulePlan) {
     return {
       shouldOutput: true,

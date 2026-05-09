@@ -1,6 +1,24 @@
 import { APPROVAL_STATUSES, RUNTIME_EVENT_TYPES, SOURCE_TYPES } from "../shared/types.ts";
+import type { GenericRecord } from "./types.ts";
 
-export function buildOutputDecision(source = {}) {
+type OutputDecisionSource = GenericRecord & {
+  sourceType?: string;
+  eventType?: string;
+  type?: string;
+  approval?: { status?: string };
+  error?: unknown;
+  priority?: string;
+  runtimeState?: { level?: string; notify?: boolean };
+  preferredPluginIds?: string[];
+  shouldOutput?: boolean;
+  outputType?: string;
+  taskResult?: {
+    outputHint?: { shouldOutput?: boolean; type?: string; outputType?: string; reason?: string; priority?: string; preferredPluginIds?: string[] };
+    outputDecision?: { shouldOutput?: boolean; type?: string; outputType?: string; reason?: string; priority?: string; preferredPluginIds?: string[] };
+  };
+};
+
+export function buildOutputDecision(source: OutputDecisionSource = {}) {
   const sourceType = source.sourceType ?? SOURCE_TYPES.INTERNAL;
   const eventType = source.eventType ?? source.type ?? null;
 
@@ -67,6 +85,15 @@ export function buildOutputDecision(source = {}) {
 
   if (source.taskResult?.outputHint?.shouldOutput || source.taskResult?.outputDecision?.shouldOutput) {
     const hint = source.taskResult.outputHint ?? source.taskResult.outputDecision;
+    if (!hint) {
+      return {
+        shouldOutput: false,
+        outputType: "none",
+        reason: "task_output_hint_missing",
+        priority: "low",
+        preferredPluginIds: []
+      };
+    }
     return {
       shouldOutput: true,
       outputType: hint.type ?? hint.outputType ?? "summary",

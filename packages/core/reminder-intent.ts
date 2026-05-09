@@ -1,3 +1,5 @@
+import type { AnalysisResult, NormalizedInput, SchedulePlan } from "./types.ts";
+
 const RELATIVE_PATTERNS = [
   { pattern: /(\d+)\s*分钟后/, unitMs: 60_000 },
   { pattern: /(\d+)\s*分后/, unitMs: 60_000 },
@@ -7,7 +9,7 @@ const RELATIVE_PATTERNS = [
   { pattern: /(\d+)\s*d(?:ays?)?\s*later/i, unitMs: 86_400_000 }
 ];
 
-const WEEKDAY_INDEX = new Map([
+const WEEKDAY_INDEX = new Map<string, number>([
   ["日", 0],
   ["天", 0],
   ["一", 1],
@@ -18,11 +20,11 @@ const WEEKDAY_INDEX = new Map([
   ["六", 6]
 ]);
 
-export function hasSchedulableReminderIntent(text) {
+export function hasSchedulableReminderIntent(text: string): boolean {
   return hasReminderKeyword(text) && (Boolean(detectRunAt(text)) || Boolean(detectIntervalMs(text)));
 }
 
-export function detectReminderPlan(normalizedInput, analysis) {
+export function detectReminderPlan(normalizedInput: NormalizedInput, analysis: AnalysisResult): SchedulePlan | null {
   if (normalizedInput.taskType !== "reminder" && analysis?.taskType !== "reminder") return null;
   const text = normalizedInput.normalizedText;
   const runAt = detectRunAt(text);
@@ -38,11 +40,11 @@ export function detectReminderPlan(normalizedInput, analysis) {
   };
 }
 
-function hasReminderKeyword(text) {
+function hasReminderKeyword(text: string): boolean {
   return /提醒|稍后|待办|回头|todo/i.test(text);
 }
 
-function detectRunAt(text) {
+function detectRunAt(text: string): string | null {
   for (const item of RELATIVE_PATTERNS) {
     const match = text.match(item.pattern);
     if (match) {
@@ -61,7 +63,7 @@ function detectRunAt(text) {
   return null;
 }
 
-function detectDayBasedRunAt(text) {
+function detectDayBasedRunAt(text: string): Date | null {
   const now = new Date();
   const target = new Date(now);
 
@@ -82,16 +84,19 @@ function detectDayBasedRunAt(text) {
   }
   if (/明天/.test(text)) {
     target.setDate(target.getDate() + 1);
-    setClock(target, ...detectClock(text, 9, 0));
+    const [hour, minute] = detectClock(text, 9, 0);
+    setClock(target, hour, minute);
     return target;
   }
 
   const weekdayMatch = text.match(/下周([日天一二三四五六])/u);
   if (weekdayMatch) {
     const weekday = WEEKDAY_INDEX.get(weekdayMatch[1]);
+    if (weekday === undefined) return null;
     const daysUntilNextWeek = 7 - now.getDay() + weekday;
     target.setDate(target.getDate() + daysUntilNextWeek);
-    setClock(target, ...detectClock(text, 9, 0));
+    const [hour, minute] = detectClock(text, 9, 0);
+    setClock(target, hour, minute);
     return target;
   }
 
@@ -106,14 +111,14 @@ function detectDayBasedRunAt(text) {
   return null;
 }
 
-function detectIntervalMs(text) {
+function detectIntervalMs(text: string): number | null {
   if (/每天|每日/.test(text)) return 86_400_000;
   if (/每周|每星期/.test(text)) return 7 * 86_400_000;
   if (/每月/.test(text)) return 30 * 86_400_000;
   return null;
 }
 
-function extractReminderText(text, summary, title) {
+function extractReminderText(text: string, summary?: string, title?: string): string {
   const cleaned = text
     .replace(/^\s*提醒我\s*/u, "")
     .replace(/(\d+\s*(分钟|分|小时|天)后)/gu, "")
@@ -124,16 +129,16 @@ function extractReminderText(text, summary, title) {
   return cleaned || summary || title || "回看这条记录";
 }
 
-function buildReminderName(text) {
+function buildReminderName(text: string): string {
   return `提醒: ${text}`.slice(0, 40);
 }
 
-function detectClock(text, fallbackHour, fallbackMinute) {
+function detectClock(text: string, fallbackHour: number, fallbackMinute: number): [number, number] {
   const match = text.match(/(\d{1,2})[:点](\d{1,2})?/u);
   if (!match) return [fallbackHour, fallbackMinute];
   return [Number(match[1]), Number(match[2] ?? 0)];
 }
 
-function setClock(date, hour, minute) {
+function setClock(date: Date, hour: number, minute: number): void {
   date.setHours(hour, minute, 0, 0);
 }

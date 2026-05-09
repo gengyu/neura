@@ -4,6 +4,70 @@ import { synthesizeCurrentInput, synthesizeResult } from "./result-synthesizer.t
 import { buildDecision } from "./decision-engine.ts";
 import { buildCaptureResult } from "./capture-result.ts";
 import { writeMemoryForDecision } from "./memory-writer.ts";
+import type {
+  AnalysisResult,
+  DecisionResult,
+  InputEvent,
+  ModelProvider,
+  NormalizedInput,
+  RepositoryLike,
+  SynthesisResult,
+  ToolExecutor,
+  ToolInput
+} from "./types.ts";
+
+type AgentLoopSynthesis = SynthesisResult;
+
+type AgentLoopScheduleResult = {
+  created: boolean;
+  id: unknown;
+  name: string;
+  mode: string;
+  runAt: unknown;
+  intervalMs: unknown;
+};
+
+type AgentLoopResult = {
+  status: string;
+  provider: unknown;
+  taskType: string;
+  scenario: string;
+  category: unknown;
+  intent: unknown;
+  decision: string[];
+  summary: string;
+  tags: string[];
+  remembered: boolean;
+  memoryType: string | null;
+  memoryReason: string | null;
+  memoryAction: string;
+  memoryId: string | number | null;
+  outputHint: {
+    shouldOutput: boolean;
+    type: string;
+    reason: string;
+    priority: string;
+  };
+  shouldOutput: boolean;
+  outputType: string;
+  outputReason: string;
+  importance: unknown;
+  confidence: unknown;
+  extractedFacts: string[];
+  warnings: string[];
+  normalizedInput: {
+    title: string;
+    inputType: string;
+    sourceKind: string;
+    keywords: string[];
+  };
+  relatedMemoryIds: unknown[];
+  answer: string | null;
+  themes: AgentLoopSynthesis["themes"];
+  actions: AgentLoopSynthesis["actions"];
+  schedule: AgentLoopScheduleResult | null;
+  capture: ReturnType<typeof buildCaptureResult> | null;
+};
 
 const AVAILABLE_TOOLS = [
   {
@@ -97,15 +161,25 @@ const AVAILABLE_TOOLS = [
 ];
 
 export class AgentLoop {
-  constructor(
-      public repository,
-      public policy,
-      public getModelProvider,
-      public tools
-  ) {}
+  repository: RepositoryLike;
+  policy: unknown;
+  getModelProvider: () => ModelProvider;
+  tools?: ToolExecutor;
 
-  async process(inputEvent) {
-    // === TaskFinalize: 创建任务记录并更新状态 ===
+  constructor(
+      repository: RepositoryLike,
+      policy: unknown,
+      getModelProvider: () => ModelProvider,
+      tools?: ToolExecutor
+  ) {
+    this.repository = repository;
+    this.policy = policy;
+    this.getModelProvider = getModelProvider;
+    this.tools = tools;
+  }
+
+  async process(inputEvent: InputEvent): Promise<AgentLoopResult> {
+    // === 1. TaskSetup: 创建任务记录并更新状态 ===
     const task = this.repository.createTask({
       sourceType: SOURCE_TYPES.INPUT_EVENT,
       sourceId: inputEvent.id,
@@ -115,42 +189,44 @@ export class AgentLoop {
     this.repository.log("info", "input", "Input event accepted", { inputEventId: inputEvent.id, type: inputEvent.type });
 
     try {
+      // === 2. Analyze: 标准化输入、召回上下文、调用模型并生成结果 ===
       // === Normalize: 标准化输入，统一格式并提取关键信息 ===
-      const normalizedInput = normalizeInputEvent(inputEvent);
+      const normalizedInput: NormalizedInput = normalizeInputEvent(inputEvent);
       const modelProvider = this.getModelProvider();
       
       // === Recall: 记忆召回，搜索相关历史记忆提供上下文 ===
       const contextMemories = this.repository.searchMemories(normalizedInput.memorySearchQuery, 5);
-      const executeTool = this.tools
-        ? async (name, input) => {
+      const toolset = this.tools;
+      const executeTool = toolset
+        ? async (name: string, input: ToolInput) => {
             // ToolStep: 工具执行阶段的实际调用逻辑
-            if (name === "search_memory") return this.tools.searchMemory(input.query);
-            if (name === "read_file") return this.tools.readFile(input.path);
-            if (name === "write_file") return this.tools.writeFile(input.path, input.content);
-            if (name === "delete_file") return this.tools.deleteFile(input.path);
-            if (name === "execute_command") return this.tools.executeCommand(input.command, input.args, { cwd: input.cwd });
-            if (name === "call_model") return this.tools.callModel(input.prompt, input.systemMessage);
-            if (name === "http_request") return this.tools.httpRequest(input.url, input.method, input.headers ?? {}, input.body ?? null);
+            if (name === "search_memory") return toolset.searchMemory(input.query ?? "");
+            if (name === "read_file") return toolset.readFile(input.path ?? "");
+            if (name === "write_file") return toolset.writeFile(input.path ?? "", input.content ?? "");
+            if (name === "delete_file") return toolset.deleteFile(input.path ?? "");
+            if (name === "execute_command") return toolset.executeCommand(input.command ?? "", input.args, { cwd: input.cwd });
+            if (name === "call_model") return toolset.callModel(input.prompt ?? "", input.systemMessage);
+            if (name === "http_request") return toolset.httpRequest(input.url ?? "", input.method, input.headers ?? {}, input.body ?? null);
             throw new Error(`Unknown tool: ${name}`);
           }
         : undefined;
 
       // === ToolStep: 调用模型分析输入，可能触发工具执行或 ApprovalPause（等待确认）===
-      const analysis = await modelProvider.analyzeInput(
+      const analysis: AnalysisResult = await modelProvider.analyzeInput(
         inputEvent,
         { normalizedInput, relatedMemories: contextMemories },
         { tools: this.tools ? AVAILABLE_TOOLS : [], executeTool }
       );
 
       // === MemoryDecision: 基于分析结果决定记忆策略（新增/更新/跳过）===
-      const decision = buildDecision({ normalizedInput, analysis });
+      const decision: DecisionResult = buildDecision({ normalizedInput, analysis });
       const effectiveAnalysis = { ...analysis, taskType: decision.taskType };
       const { summary, tags } = effectiveAnalysis;
       const relatedMemories = analysis.relatedMemories ?? [];
       const memoryDecision = decision.memoryDecision;
       const remembered = Boolean(memoryDecision.shouldRemember);
 
-      const result = {
+      const result: AgentLoopResult = {
         status: TASK_STATUSES.COMPLETED,
         provider: effectiveAnalysis.provider,
         taskType: decision.taskType,
@@ -159,7 +235,7 @@ export class AgentLoop {
         intent: effectiveAnalysis.intent,
         decision: decision.actions,
         summary,
-        tags,
+        tags: tags ?? [],
         remembered,
         memoryType: memoryDecision.memoryType,
         memoryReason: memoryDecision.reason,
@@ -184,25 +260,31 @@ export class AgentLoop {
           sourceKind: normalizedInput.sourceKind,
           keywords: normalizedInput.keywords
         },
-        relatedMemoryIds: [...new Set(relatedMemories.map((item) => item.id))]
+        relatedMemoryIds: [...new Set(relatedMemories.map((item: { id: unknown }) => item.id))],
+        answer: null,
+        themes: [],
+        actions: [],
+        schedule: null,
+        capture: null
       };
 
-      let synthesis = null;
+      let synthesis: AgentLoopSynthesis | null = null;
       // === MemorySynthesis: 根据决策模式合成记忆内容 ===
       if (decision.synthesisMode === "current_input") {
         // 对当前输入进行摘要和结构化
-        synthesis = await synthesizeCurrentInput({
+        const currentInputSynthesis: AgentLoopSynthesis = await synthesizeCurrentInput({
           normalizedInput,
           analysis: effectiveAnalysis,
           modelProvider
         });
-        result.summary = synthesis.summary;
-        result.answer = synthesis.summary;
-        result.themes = synthesis.themes;
-        result.actions = synthesis.actions;
+        synthesis = currentInputSynthesis;
+        result.summary = currentInputSynthesis.summary;
+        result.answer = currentInputSynthesis.summary;
+        result.themes = currentInputSynthesis.themes;
+        result.actions = currentInputSynthesis.actions;
       } else if (decision.synthesisMode === "memory_answer") {
         // 基于历史记忆回答问题
-        synthesis = await synthesizeResult({
+        const memoryAnswerSynthesis: AgentLoopSynthesis = await synthesizeResult({
           mode: "answer",
           query: normalizedInput.normalizedText,
           memories: relatedMemories.length > 0 ? relatedMemories : this.repository.searchMemories(normalizedInput.memorySearchQuery, 8),
@@ -210,28 +292,31 @@ export class AgentLoop {
           analysis: effectiveAnalysis,
           modelProvider
         });
-        result.summary = synthesis.summary;
-        result.answer = synthesis.summary;
-        result.themes = synthesis.themes;
-        result.actions = synthesis.actions;
-        result.relatedMemoryIds = synthesis.sourceMemoryIds ?? result.relatedMemoryIds;
+        synthesis = memoryAnswerSynthesis;
+        result.summary = memoryAnswerSynthesis.summary;
+        result.answer = memoryAnswerSynthesis.summary;
+        result.themes = memoryAnswerSynthesis.themes;
+        result.actions = memoryAnswerSynthesis.actions;
+        result.relatedMemoryIds = memoryAnswerSynthesis.sourceMemoryIds ?? result.relatedMemoryIds;
       }
 
       let schedule = null;
       // 如果决策包含调度计划，创建定时任务
       if (decision.schedulePlan) {
-        schedule = this.repository.createSchedule(decision.schedulePlan);
+        const createdSchedule = this.repository.createSchedule(decision.schedulePlan);
+        schedule = createdSchedule;
         result.schedule = {
           created: true,
-          id: schedule.id,
-          name: schedule.name,
-          mode: schedule.mode,
-          runAt: schedule.runAt,
-          intervalMs: schedule.intervalMs
+          id: createdSchedule.id,
+          name: createdSchedule.name,
+          mode: createdSchedule.mode,
+          runAt: createdSchedule.runAt,
+          intervalMs: createdSchedule.intervalMs
         };
         result.taskType = "reminder";
       }
 
+      // === 3. Persist: 写入记忆、构建捕获结果并完成任务 ===
       // === MemoryWrite: 根据决策写入记忆（新增/更新/跳过）===
       const { memory, memoryAction } = writeMemoryForDecision({
         repository: this.repository,
@@ -242,7 +327,7 @@ export class AgentLoop {
         synthesis
       });
       result.memoryAction = memoryAction;
-      result.memoryId = memory?.id ?? null;
+      result.memoryId = (memory?.id as string | number | null | undefined) ?? null;
 
       // 构建捕获结果，整合所有处理产物
       result.capture = buildCaptureResult({

@@ -1,4 +1,57 @@
-export function buildCaptureResult({ normalizedInput, analysis, decision, memoryAction, memory, schedule = null, synthesis = null }) {
+import type {
+  AnalysisResult,
+  DecisionResult,
+  MemoryRecord,
+  NormalizedInput,
+  SchedulePlan,
+  SynthesisResult
+} from "./types.ts";
+
+export type CaptureResult = {
+  title: string;
+  summary: string;
+  keyPoints: string[];
+  actions: string[];
+  tags: string[];
+  themes: string[];
+  category?: string;
+  intent?: string;
+  taskType: string;
+  decision: string[];
+  memory: {
+    remembered: boolean;
+    action: string;
+    id: unknown;
+    type: string;
+    reason: string | null;
+  };
+  schedule: {
+    id: unknown;
+    name: string;
+    runAt: string | null;
+    intervalMs: number | null;
+    status?: string;
+  } | null;
+  confidence: unknown;
+};
+
+export function buildCaptureResult({
+  normalizedInput,
+  analysis,
+  decision,
+  memoryAction,
+  memory,
+  schedule = null,
+  synthesis = null
+}: {
+  normalizedInput: NormalizedInput;
+  analysis: AnalysisResult;
+  decision: DecisionResult;
+  memoryAction: string;
+  memory?: MemoryRecord | null;
+  schedule?: SchedulePlan | null;
+  synthesis?: SynthesisResult | null;
+}): CaptureResult {
   const keyPoints = buildKeyPoints(analysis);
   const actions = [...new Set([
     ...(synthesis?.actions ?? []),
@@ -37,8 +90,8 @@ export function buildCaptureResult({ normalizedInput, analysis, decision, memory
   };
 }
 
-export function formatCaptureResult(captureResult) {
-  const lines = [];
+export function formatCaptureResult(captureResult: CaptureResult): string {
+  const lines: string[] = [];
   lines.push(captureResult.summary);
 
   if (captureResult.keyPoints.length > 0) {
@@ -60,7 +113,7 @@ export function formatCaptureResult(captureResult) {
   return lines.join("\n").trim();
 }
 
-function buildResultTitle(normalizedInput, analysis) {
+function buildResultTitle(normalizedInput: NormalizedInput, analysis: AnalysisResult): string {
   const category = analysis.category || normalizedInput.scenario || "capture";
   if (normalizedInput.title && normalizedInput.title !== `Untitled ${normalizedInput.inputType}`) {
     return normalizedInput.title.slice(0, 80);
@@ -68,7 +121,7 @@ function buildResultTitle(normalizedInput, analysis) {
   return category;
 }
 
-function buildKeyPoints(analysis) {
+function buildKeyPoints(analysis: AnalysisResult): string[] {
   const facts = (analysis.extractedFacts ?? [])
     .map(cleanSummary)
     .filter(Boolean);
@@ -77,9 +130,9 @@ function buildKeyPoints(analysis) {
   return splitIntoPoints(analysis.summary).slice(0, 4);
 }
 
-function buildActions(normalizedInput, analysis, decision) {
+function buildActions(normalizedInput: NormalizedInput, analysis: AnalysisResult, decision: DecisionResult): string[] {
   const text = `${normalizedInput.normalizedText}\n${analysis.summary}`;
-  const actions = [];
+  const actions: string[] = [];
 
   if (decision?.schedulePlan) {
     actions.push(`已创建提醒：${decision.schedulePlan.name}`);
@@ -96,14 +149,14 @@ function buildActions(normalizedInput, analysis, decision) {
   return [...new Set(actions.map(cleanSummary).filter(Boolean))].slice(0, 5);
 }
 
-function splitIntoPoints(value) {
+function splitIntoPoints(value: string): string[] {
   return String(value ?? "")
     .split(/[\n。！？!?；;]/u)
     .map(cleanSummary)
     .filter((item) => item.length > 0 && item.length <= 160);
 }
 
-function cleanSummary(value) {
+function cleanSummary(value: string): string {
   return String(value ?? "")
     .replace(/^\[[^\]]+\]\s*/, "")
     .replace(/\s+/g, " ")

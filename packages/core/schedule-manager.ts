@@ -1,24 +1,31 @@
 import { RUNTIME_EVENT_TYPES, SCHEDULE_STATUSES, SOURCE_TYPES, TASK_STATUSES } from "../shared/types.ts";
 import { buildOutputDecision } from "./output-decision.ts";
 import { buildOutputRoute } from "./output-routing.ts";
+import type { OutputPlugin, RepositoryLike, RuntimeLike, SchedulePlan } from "./types.ts";
+import type { OutputDispatcher } from "./output-dispatcher.ts";
 
 export class ScheduleManager {
-  constructor({ repository, runtime, outputDispatcher }) {
+  repository: RepositoryLike;
+  runtime: RuntimeLike;
+  outputDispatcher: OutputDispatcher;
+  running: boolean;
+
+  constructor({ repository, runtime, outputDispatcher }: { repository: RepositoryLike; runtime: RuntimeLike; outputDispatcher: OutputDispatcher }) {
     this.repository = repository;
     this.runtime = runtime;
     this.outputDispatcher = outputDispatcher;
     this.running = false;
   }
 
-  async processDueSchedules(now = new Date()) {
+  async processDueSchedules(now = new Date()): Promise<Array<{ id: unknown; mode: string; nextRunAt: string | null; completed: boolean }>> {
     if (this.running) return [];
     this.running = true;
 
     try {
-      const dueSchedules = this.repository.getDueSchedules(now.toISOString());
-      const results = [];
+      const dueSchedules = this.repository.getDueSchedules?.(now.toISOString()) ?? [];
+      const results: Array<{ id: unknown; mode: string; nextRunAt: string | null; completed: boolean }> = [];
 
-      for (const schedule of dueSchedules) {
+      for (const schedule of dueSchedules as SchedulePlan[]) {
         if (schedule.mode === "reminder") {
           const task = this.repository.createTask({
             sourceType: SOURCE_TYPES.SCHEDULE,
@@ -70,7 +77,7 @@ export class ScheduleManager {
         }
 
         const nextRunAt = schedule.intervalMs ? new Date(now.getTime() + Number(schedule.intervalMs)).toISOString() : null;
-        this.repository.markScheduleRun(schedule.id, {
+        this.repository.markScheduleRun?.(schedule.id, {
           nextRunAt: nextRunAt ?? schedule.runAt,
           status: nextRunAt ? SCHEDULE_STATUSES.ACTIVE : SCHEDULE_STATUSES.COMPLETED
         });

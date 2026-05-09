@@ -1,40 +1,56 @@
 import { OUTPUT_STATUSES, SOURCE_TYPES } from "../shared/types.ts";
+import type { GenericRecord, OutputEvent, OutputPlugin, RepositoryLike } from "./types.ts";
 
 export class OutputDispatcher {
-  constructor({ repository, plugins }) {
+  repository: RepositoryLike;
+  plugins: OutputPlugin[] = [];
+
+  constructor({ repository, plugins }: { repository: RepositoryLike; plugins: OutputPlugin[] }) {
     this.repository = repository;
     this.setPlugins(plugins);
   }
 
-  setPlugins(plugins) {
+  setPlugins(plugins: OutputPlugin[]): void {
     this.plugins = plugins.filter((plugin) => plugin.direction === "output" && plugin._enabled);
   }
 
-  async send({ type, content, sourceType = SOURCE_TYPES.INTERNAL, sourceId = null, preferredPluginIds = null }) {
+  async send({
+    type,
+    content,
+    sourceType = SOURCE_TYPES.INTERNAL,
+    sourceId = null,
+    preferredPluginIds = null
+  }: {
+    type: string;
+    content: GenericRecord;
+    sourceType?: string;
+    sourceId?: unknown;
+    preferredPluginIds?: string[] | null;
+  }): Promise<Array<{ pluginId: string; status: string; eventId: unknown; error?: string }>> {
     const targets = preferredPluginIds
       ? this.plugins.filter((plugin) => preferredPluginIds.includes(plugin.id))
       : this.plugins;
     const selectedTargets = targets.length > 0 ? targets : this.plugins.filter((plugin) => plugin.type === "file");
 
-    const results = [];
+    const results: Array<{ pluginId: string; status: string; eventId: unknown; error?: string }> = [];
     for (const plugin of selectedTargets) {
-      const event = this.repository.createOutputEvent({
+      const event = this.repository.createOutputEvent?.({
         pluginId: plugin.id,
         sourceType,
         sourceId,
         type,
         content,
         status: OUTPUT_STATUSES.PENDING
-      });
+      }) as OutputEvent;
 
       try {
         if (typeof plugin.send === "function") {
           await plugin.send({ event, content, type, repository: this.repository });
         }
-        this.repository.updateOutputEventStatus(event.id, OUTPUT_STATUSES.SENT, content);
+        this.repository.updateOutputEventStatus?.(event.id, OUTPUT_STATUSES.SENT, content);
         results.push({ pluginId: plugin.id, status: OUTPUT_STATUSES.SENT, eventId: event.id });
       } catch (error) {
-        this.repository.updateOutputEventStatus(event.id, OUTPUT_STATUSES.FAILED, {
+        this.repository.updateOutputEventStatus?.(event.id, OUTPUT_STATUSES.FAILED, {
           ...content,
           error: error instanceof Error ? error.message : String(error)
         });

@@ -5,8 +5,8 @@ import { normalizeToText } from "./memory.ts";
 const tokenizer = new natural.WordTokenizer();
 const DIMENSIONS = 384;
 
-export function createMemoryVector(value) {
-  const vector = new Array(DIMENSIONS).fill(0);
+export function createMemoryVector(value: unknown): number[] {
+  const vector: number[] = new Array(DIMENSIONS).fill(0);
   const tokens = tokenizeForVector(value);
 
   for (const token of tokens) {
@@ -18,22 +18,22 @@ export function createMemoryVector(value) {
   return magnitude > 0 ? vector.map((item) => Number((item / magnitude).toFixed(6))) : vector;
 }
 
-export function scoreMemoryVector(queryVector, memoryVector) {
+export function scoreMemoryVector(queryVector: number[] | null | undefined, memoryVector: number[] | null | undefined): number {
   if (!queryVector?.length || !memoryVector?.length) return 0;
   return cosineSimilarity(queryVector, memoryVector);
 }
 
-export function tokenizeForVector(value) {
+export function tokenizeForVector(value: unknown): string[] {
   const text = normalizeToText(value).toLowerCase();
   const latin = tokenizer
     .tokenize(text)
-    .map((token) => natural.PorterStemmer.stem(token))
-    .filter((token) => token.length > 1);
+    .map((token: string) => natural.PorterStemmer.stem(token))
+    .filter((token: string) => token.length > 1);
   const cjk = Array.from(text.matchAll(/\p{Script=Han}{1,2}/gu)).map((match) => match[0]);
   return [...new Set([...latin, ...cjk])];
 }
 
-function hashToken(token) {
+function hashToken(token: string): number {
   let hash = 2166136261;
   for (let i = 0; i < token.length; i += 1) {
     hash ^= token.charCodeAt(i);

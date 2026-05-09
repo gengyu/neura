@@ -1,5 +1,15 @@
 import { normalizeToText } from "../memory/memory.ts";
 import { SOURCE_TYPES } from "../shared/types.ts";
+import type {
+  AnalysisResult,
+  DecisionResult,
+  InputEvent,
+  MemoryDecision,
+  MemoryRecord,
+  NormalizedInput,
+  RepositoryLike,
+  SynthesisResult
+} from "./types.ts";
 
 export function writeMemoryForDecision({
   repository,
@@ -8,7 +18,14 @@ export function writeMemoryForDecision({
   analysis,
   decision,
   synthesis = null
-}) {
+}: {
+  repository: RepositoryLike;
+  inputEvent: InputEvent;
+  normalizedInput: NormalizedInput;
+  analysis: AnalysisResult;
+  decision: DecisionResult;
+  synthesis?: SynthesisResult | null;
+}): { memory: MemoryRecord | null; memoryAction: string } {
   const memoryDecision = decision.memoryDecision;
   if (!memoryDecision.shouldRemember) {
     return { memory: null, memoryAction: "skipped" };
@@ -52,7 +69,19 @@ export function writeMemoryForDecision({
   return { memory, memoryAction: "created" };
 }
 
-function buildMemoryPayload({ inputEvent, normalizedInput, analysis, memoryDecision, synthesis }) {
+function buildMemoryPayload({
+  inputEvent,
+  normalizedInput,
+  analysis,
+  memoryDecision,
+  synthesis
+}: {
+  inputEvent: InputEvent;
+  normalizedInput: NormalizedInput;
+  analysis: AnalysisResult;
+  memoryDecision: MemoryDecision;
+  synthesis?: SynthesisResult | null;
+}): Record<string, unknown> {
   const summary = synthesis?.summary ?? analysis.summary;
   const facts = [
     ...(analysis.extractedFacts ?? []),
@@ -78,16 +107,20 @@ function buildMemoryPayload({ inputEvent, normalizedInput, analysis, memoryDecis
   };
 }
 
-function dedupeTags(...groups) {
-  return [...new Set(groups.flat().filter(Boolean))].slice(0, 12);
+function dedupeTags(...groups: Array<Array<string | null | undefined> | string | null | undefined>): string[] {
+  return [...new Set(
+    groups
+      .flat()
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+  )].slice(0, 12);
 }
 
-function buildMemorySummary(summary, memoryType) {
+function buildMemorySummary(summary: string, memoryType: string | null): string {
   if (!memoryType) return summary;
   if (summary.startsWith(`[${memoryType}]`)) return summary;
   return `[${memoryType}] ${summary}`;
 }
 
-function shouldUseStrictSimilarity(memoryDecision) {
+function shouldUseStrictSimilarity(memoryDecision: MemoryDecision): boolean {
   return memoryDecision.memoryType === "知识片段" || memoryDecision.actionHint === "create";
 }

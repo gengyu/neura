@@ -1,12 +1,26 @@
 import { normalizeToText, tokenize } from "../memory/memory.ts";
 import { hasSchedulableReminderIntent } from "./reminder-intent.ts";
+import type { InputEvent, NormalizedInput } from "./types.ts";
 
-export function normalizeInputEvent(inputEvent) {
-  const content = inputEvent.content;
+type InputContent = string | {
+  path?: string;
+  extension?: string | null;
+  kind?: string | null;
+  mimeType?: string;
+  note?: string;
+  text?: string;
+  summaryHint?: string;
+  eventName?: string;
+  url?: string;
+  [key: string]: unknown;
+} | null | undefined;
+
+export function normalizeInputEvent(inputEvent: InputEvent): NormalizedInput {
+  const content = inputEvent.content as InputContent;
   const inputType = inputEvent.type ?? "event";
   const sourcePluginId = inputEvent.pluginId ?? "unknown";
 
-  const normalized = {
+  const normalized: NormalizedInput = {
     sourcePluginId,
     inputType,
     sourceKind: classifySource(inputType, sourcePluginId),
@@ -31,6 +45,8 @@ export function normalizeInputEvent(inputEvent) {
       likelyDecision: false,
       likelyPreference: false
     },
+    memorySearchQuery: "",
+    taskType: "context_capture"
   };
 
   normalized.keywords = tokenize(`${normalized.title}\n${normalized.normalizedText}`).slice(0, 12);
@@ -40,7 +56,7 @@ export function normalizeInputEvent(inputEvent) {
   return normalized;
 }
 
-function classifySource(inputType, sourcePluginId) {
+function classifySource(inputType: string, sourcePluginId: string): string {
   if (sourcePluginId === "cli-input") return "direct_user_input";
   if (sourcePluginId === "webhook-input") return "external_event";
   if (sourcePluginId === "folder-watch-input") return "watched_file";
@@ -51,7 +67,7 @@ function classifySource(inputType, sourcePluginId) {
   return "generic_input";
 }
 
-function classifyScenario(inputType, sourcePluginId, content) {
+function classifyScenario(inputType: string, sourcePluginId: string, content: InputContent): string {
   if (sourcePluginId === "scheduler-input") return "scheduled_check";
   if (sourcePluginId === "webhook-input") return "webhook_event";
   if (sourcePluginId === "screenshot-watch-input" || inputType === "image") return "screenshot_capture";
@@ -63,7 +79,7 @@ function classifyScenario(inputType, sourcePluginId, content) {
   return "generic_capture";
 }
 
-function buildTitle(inputType, content) {
+function buildTitle(inputType: string, content: InputContent): string {
   if (typeof content === "string") return content.trim().slice(0, 80) || `Untitled ${inputType}`;
   if (content?.path) return String(content.path).split("/").pop() ?? `Untitled ${inputType}`;
   if (content?.eventName) return String(content.eventName);
@@ -71,7 +87,7 @@ function buildTitle(inputType, content) {
   return `Untitled ${inputType}`;
 }
 
-function buildNormalizedText(inputType, content) {
+function buildNormalizedText(inputType: string, content: InputContent): string {
   if (typeof content === "string") return content.trim();
   if (inputType === "file" && typeof content?.text === "string") return content.text.trim();
   if (inputType === "image") {
@@ -80,7 +96,7 @@ function buildNormalizedText(inputType, content) {
   return normalizeToText(content).trim();
 }
 
-function buildSummaryHint(inputType, content) {
+function buildSummaryHint(inputType: string, content: InputContent): string {
   if (inputType === "image") return "这是一个图片/截图输入，需要理解视觉内容及用户上下文。";
   if (inputType === "file") {
     if (content?.kind === "code") return "这是一个代码文件输入，需要提取目的、模块和关键变化。";
@@ -91,7 +107,7 @@ function buildSummaryHint(inputType, content) {
   return "这是一个通用输入，需要判断其长期价值、任务价值和输出必要性。";
 }
 
-function buildFileDescriptor(content) {
+function buildFileDescriptor(content: InputContent): NormalizedInput["file"] {
   if (!content?.path) return null;
   return {
     path: content.path,
@@ -100,7 +116,7 @@ function buildFileDescriptor(content) {
   };
 }
 
-function buildImageDescriptor(content) {
+function buildImageDescriptor(content: InputContent): NormalizedInput["image"] {
   if (!content?.path || !content?.mimeType) return null;
   return {
     path: content.path,
@@ -108,7 +124,7 @@ function buildImageDescriptor(content) {
   };
 }
 
-function deriveSignals(normalized) {
+function deriveSignals(normalized: NormalizedInput): NormalizedInput["signals"] {
   const text = normalized.normalizedText;
   const lowered = text.toLowerCase();
   return {
@@ -132,7 +148,7 @@ function deriveSignals(normalized) {
   };
 }
 
-function buildMemorySearchQuery(normalized) {
+function buildMemorySearchQuery(normalized: NormalizedInput): string {
   const segments = [
     normalized.title,
     ...normalized.keywords.slice(0, 6)
@@ -140,7 +156,7 @@ function buildMemorySearchQuery(normalized) {
   return segments.join(" ").slice(0, 160) || normalized.normalizedText.slice(0, 160);
 }
 
-function inferTaskType(normalized) {
+function inferTaskType(normalized: NormalizedInput): string {
   if (normalized.signals.asksCurrentSummary && normalized.signals.hasLongFormContent) return "summarize_current";
   if (normalized.signals.containsReminderIntent || normalized.scenario === "scheduled_check") return "reminder";
   if (normalized.signals.asksHistoryLookup) return "memory_query";

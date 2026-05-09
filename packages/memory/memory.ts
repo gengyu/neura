@@ -13,23 +13,21 @@ const STOP_WORDS = new Set([
   "应该"
 ]);
 
-
-
-export function normalizeForSimilarity(value) {
+export function normalizeForSimilarity(value: unknown): string {
   return normalizeToText(value)
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 }
 
-export function tokenize(value) {
+export function tokenize(value: unknown): string[] {
   const normalized = normalizeForSimilarity(value);
   const latin = normalized.match(/[a-z0-9_-]{2,}/g) ?? [];
   const cjk = normalized.match(/\p{Script=Han}/gu) ?? [];
   return [...new Set([...latin, ...cjk].filter((token) => !STOP_WORDS.has(token)))];
 }
 
-export function similarityScore(a, b) {
+export function similarityScore(a: unknown, b: unknown): number {
   const aText = normalizeForSimilarity(a);
   const bText = normalizeForSimilarity(b);
   if (!aText || !bText) return 0;
@@ -47,7 +45,7 @@ export function similarityScore(a, b) {
   return overlap / Math.max(aTokens.size, bTokens.size);
 }
 
-export function normalizeToText(content) {
+export function normalizeToText(content: unknown): string {
   if (typeof content === "string") return content;
   return JSON.stringify(content, null, 2);
 }

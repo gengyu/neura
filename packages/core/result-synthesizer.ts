@@ -1,3 +1,26 @@
+import type {
+  AnalysisResult,
+  MemoryRecord,
+  ModelProvider,
+  NormalizedInput,
+  SynthesisResult
+} from "./types.ts";
+
+type SynthesizeResultInput = {
+  mode?: string;
+  query?: string;
+  memories?: MemoryRecord[];
+  normalizedInput?: NormalizedInput | null;
+  analysis?: AnalysisResult | null;
+  modelProvider?: ModelProvider | null;
+};
+
+type SynthesizeCurrentInput = {
+  normalizedInput: NormalizedInput;
+  analysis?: AnalysisResult | null;
+  modelProvider?: ModelProvider | null;
+};
+
 export async function synthesizeResult({
   mode = "review",
   query = "",
@@ -5,7 +28,7 @@ export async function synthesizeResult({
   normalizedInput = null,
   analysis = null,
   modelProvider = null
-}) {
+}: SynthesizeResultInput): Promise<SynthesisResult> {
   if (!memories.length) {
     return {
       summary: query ? `目前没有找到与“${query}”相关的稳定记录。` : "目前还没有足够的记录可供整理。",
@@ -21,7 +44,7 @@ export async function synthesizeResult({
       const response = await modelProvider.callModel(
         buildSynthesisPrompt({ mode, query, memories, normalizedInput, analysis }),
         "你是 Neura 的整理助手。请用简洁中文直接给出归纳结果，不要复述提示词。"
-      );
+      ) as { content?: string } | null;
       const content = String(response?.content ?? "").trim();
       if (content && !content.startsWith("Mock model response:")) {
         return {
@@ -44,7 +67,7 @@ export async function synthesizeCurrentInput({
   normalizedInput,
   analysis = null,
   modelProvider = null
-}) {
+}: SynthesizeCurrentInput): Promise<SynthesisResult> {
   const text = normalizedInput?.normalizedText ?? "";
   if (!text.trim()) {
     return {
@@ -61,7 +84,7 @@ export async function synthesizeCurrentInput({
       const response = await modelProvider.callModel(
         buildCurrentInputPrompt({ normalizedInput, analysis }),
         "你是 Neura 的内容整理助手。请直接给出对用户有用的中文整理结果，不要复述提示词。"
-      );
+      ) as { content?: string } | null;
       const content = String(response?.content ?? "").trim();
       if (content && !content.startsWith("Mock model response:")) {
         return {
@@ -80,8 +103,8 @@ export async function synthesizeCurrentInput({
   return deterministicCurrentInputSynthesis({ normalizedInput, analysis });
 }
 
-function buildSynthesisPrompt({ mode, query, memories, normalizedInput, analysis }) {
-  const memoryLines = memories.slice(0, 10).map((memory, index) => {
+function buildSynthesisPrompt({ mode, query, memories, normalizedInput, analysis }: Required<Pick<SynthesizeResultInput, "mode" | "query" | "memories">> & Pick<SynthesizeResultInput, "normalizedInput" | "analysis">): string {
+  const memoryLines = memories.slice(0, 10).map((memory: MemoryRecord, index: number) => {
     return [
       `${index + 1}. 摘要: ${memory.summary}`,
       `标签: ${(memory.tags ?? []).join(", ")}`,
@@ -102,7 +125,7 @@ function buildSynthesisPrompt({ mode, query, memories, normalizedInput, analysis
   ].filter(Boolean).join("\n\n");
 }
 
-function buildCurrentInputPrompt({ normalizedInput, analysis }) {
+function buildCurrentInputPrompt({ normalizedInput, analysis }: { normalizedInput: NormalizedInput; analysis?: AnalysisResult | null }): string {
   return [
     `输入标题: ${normalizedInput.title}`,
     `输入场景: ${normalizedInput.scenario}`,
@@ -113,7 +136,7 @@ function buildCurrentInputPrompt({ normalizedInput, analysis }) {
   ].filter(Boolean).join("\n\n");
 }
 
-function deterministicSynthesis({ mode, query, memories, normalizedInput }) {
+function deterministicSynthesis({ mode, query, memories, normalizedInput }: Required<Pick<SynthesizeResultInput, "mode" | "query" | "memories">> & Pick<SynthesizeResultInput, "normalizedInput">): SynthesisResult {
   const themes = deriveThemes(memories);
   const bullets = memories.slice(0, 4).map((memory) => cleanBullet(memory.summary));
   const actions = deriveActions(memories);
@@ -140,11 +163,11 @@ function deterministicSynthesis({ mode, query, memories, normalizedInput }) {
     bullets,
     actions,
     themes,
-    sourceMemoryIds: memories.map((item) => item.id)
+    sourceMemoryIds: memories.map((item: MemoryRecord) => item.id)
   };
 }
 
-function deterministicCurrentInputSynthesis({ normalizedInput, analysis }) {
+function deterministicCurrentInputSynthesis({ normalizedInput, analysis }: { normalizedInput: NormalizedInput; analysis?: AnalysisResult | null }): SynthesisResult {
   const text = normalizedInput.normalizedText;
   const points = splitTextIntoPoints(text).slice(0, 6);
   const actions = deriveActionsFromText(text);
@@ -170,8 +193,8 @@ function deterministicCurrentInputSynthesis({ normalizedInput, analysis }) {
   };
 }
 
-function deriveThemes(memories) {
-  const counter = new Map();
+function deriveThemes(memories: MemoryRecord[]): string[] {
+  const counter = new Map<string, number>();
   for (const memory of memories) {
     for (const tag of memory.tags ?? []) {
       const normalized = String(tag).trim();
@@ -185,8 +208,8 @@ function deriveThemes(memories) {
     .slice(0, 6);
 }
 
-function deriveActions(memories) {
-  const actions = [];
+function deriveActions(memories: MemoryRecord[]): string[] {
+  const actions: string[] = [];
   for (const memory of memories) {
     const text = `${memory.summary}\n${memory.content}`;
     if (/提醒|待办|todo|检查|整理|推进|回看/u.test(text)) {
@@ -196,20 +219,20 @@ function deriveActions(memories) {
   return [...new Set(actions)];
 }
 
-function deriveActionsFromText(value) {
+function deriveActionsFromText(value: string): string[] {
   return splitTextIntoPoints(value)
     .filter((item) => /待办|todo|下一步|跟进|检查|整理|推进|提醒|回看|需要|应该|可以/u.test(item))
     .slice(0, 5);
 }
 
-function splitTextIntoPoints(value) {
+function splitTextIntoPoints(value: string): string[] {
   return String(value ?? "")
     .split(/[\n。！？!?；;]/u)
     .map(cleanBullet)
     .filter((item) => item.length > 0 && item.length <= 180);
 }
 
-function buildAnswerOpener(query, themes, bullets) {
+function buildAnswerOpener(query: string, themes: string[], bullets: string[]): string {
   if (bullets.length === 0) {
     return query ? `关于“${query}”，目前记录还不够多，暂时只能给出很初步的判断。` : "目前记录有限，只能给出初步判断。";
   }
@@ -219,7 +242,7 @@ function buildAnswerOpener(query, themes, bullets) {
   return `基于现有记录，当前更明确的结论是：${bullets[0]}`;
 }
 
-function buildReviewOpener(query, themes, bullets) {
+function buildReviewOpener(query: string, themes: string[], bullets: string[]): string {
   if (query) {
     return `围绕“${query}”，最近的记录已经逐渐收敛到这些重点。`;
   }
@@ -229,11 +252,11 @@ function buildReviewOpener(query, themes, bullets) {
   return `最近记录里已经出现了一些可以整理的稳定主题。`;
 }
 
-function cleanBullet(value) {
+function cleanBullet(value: string): string {
   return String(value).replace(/^\[[^\]]+\]\s*/, "").trim();
 }
 
-function truncate(value, maxLength) {
+function truncate(value: string, maxLength: number): string {
   const text = String(value ?? "");
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
 }

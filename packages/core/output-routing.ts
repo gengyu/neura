@@ -1,14 +1,28 @@
 import { SOURCE_TYPES } from "../shared/types.ts";
+import type { OutputEvent, OutputPlugin, RepositoryLike } from "./types.ts";
 
-export function buildOutputRoute({ outputEvent = {}, decision = {}, repository }) {
-  const enabledOutputs = repository
-    .listPlugins()
-    .filter((plugin) => plugin.direction === "output" && plugin.enabled);
+type OutputRouteDecision = {
+  preferredPluginIds?: string[];
+  outputType?: string;
+  priority?: string;
+};
 
-  const idsByType = new Map(enabledOutputs.map((plugin) => [plugin.type, plugin.id]));
+export function buildOutputRoute({
+  outputEvent = {},
+  decision = {},
+  repository
+}: {
+  outputEvent?: OutputEvent;
+  decision?: OutputRouteDecision;
+  repository: RepositoryLike;
+}): { preferredPluginIds: string[]; deliveryMode: string; shouldPersistLog: boolean } {
+  const enabledOutputs = (repository.listPlugins?.() ?? [])
+    .filter((plugin: OutputPlugin) => plugin.direction === "output" && plugin.enabled);
+
+  const idsByType = new Map<string, string>(enabledOutputs.map((plugin: OutputPlugin) => [plugin.type, plugin.id]));
   const preferredPluginIds = [...(decision.preferredPluginIds ?? outputEvent.preferredPluginIds ?? [])];
 
-  const addIfEnabled = (type) => {
+  const addIfEnabled = (type: string): void => {
     const id = idsByType.get(type);
     if (id && !preferredPluginIds.includes(id)) preferredPluginIds.push(id);
   };
@@ -50,9 +64,12 @@ export function buildOutputRoute({ outputEvent = {}, decision = {}, repository }
   };
 }
 
-function describeDeliveryMode(preferredPluginIds, idsByType) {
-  if (preferredPluginIds.includes(idsByType.get("system-notification"))) return "push";
-  if (preferredPluginIds.includes(idsByType.get("cli"))) return "interactive";
-  if (preferredPluginIds.includes(idsByType.get("admin-ui"))) return "dashboard";
+function describeDeliveryMode(preferredPluginIds: string[], idsByType: Map<string, string>): string {
+  const notificationId = idsByType.get("system-notification");
+  const cliId = idsByType.get("cli");
+  const adminUiId = idsByType.get("admin-ui");
+  if (notificationId && preferredPluginIds.includes(notificationId)) return "push";
+  if (cliId && preferredPluginIds.includes(cliId)) return "interactive";
+  if (adminUiId && preferredPluginIds.includes(adminUiId)) return "dashboard";
   return "silent";
 }

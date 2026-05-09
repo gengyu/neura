@@ -14,10 +14,38 @@ import { synthesizeResult } from "./result-synthesizer.ts";
 import { ScheduleManager } from "./schedule-manager.ts";
 import { buildOutputDecision } from "./output-decision.ts";
 import { buildOutputRoute } from "./output-routing.ts";
+import type { GenericRecord, InputEvent, ModelProvider, OutputEvent, OutputPlugin, RepositoryLike } from "./types.ts";
 
-async function initializePlugins(repository, configPlugins) {
-  const loaded = await loadPlugins();
-  const overrideMap = new Map();
+type PluginOverride = { id: string; enabled?: boolean; config?: Record<string, unknown> };
+type RuntimePlugin = OutputPlugin & {
+  config?: Record<string, unknown>;
+  _mergedConfig?: Record<string, unknown>;
+  init?: (runtime: RuntimeShape) => Promise<(() => Promise<void> | void) | void> | (() => Promise<void> | void) | void;
+};
+type RuntimeShape = {
+  input: (content: unknown, options?: GenericRecord) => Promise<unknown>;
+  review: (query?: string, options?: { limit?: number }) => Promise<unknown>;
+  initPlugins: () => Promise<() => Promise<void>>;
+  startPlugin: (pluginId: string) => Promise<boolean>;
+  stopPlugin: (pluginId: string) => Promise<boolean>;
+  reloadPlugin: (pluginId: string) => Promise<boolean>;
+  setPluginEnabled: (pluginId: string, enabled: boolean) => Promise<boolean>;
+  markRunning: (pid?: number) => void;
+  heartbeat: (pid?: number) => void;
+  processDueSchedules: (now?: Date) => Promise<unknown>;
+  emitOutput: (source?: GenericRecord, content?: GenericRecord) => Promise<unknown>;
+  dispatchOutput: (event: OutputEvent & { content: GenericRecord; type: string }) => Promise<unknown>;
+  markStopped: (reason?: string) => void;
+  status: () => GenericRecord;
+  [key: string]: unknown;
+};
+
+async function initializePlugins(repository: RepositoryLike & {
+  upsertPlugin: (plugin: RuntimePlugin, status: string) => void;
+  pruneMissingPlugins: (ids: string[]) => void;
+}, configPlugins?: PluginOverride[]): Promise<RuntimePlugin[]> {
+  const loaded = await loadPlugins() as RuntimePlugin[];
+  const overrideMap = new Map<string, PluginOverride>();
   if (Array.isArray(configPlugins)) {
     for (const override of configPlugins) {
       overrideMap.set(override.id, override);
@@ -37,7 +65,7 @@ async function initializePlugins(repository, configPlugins) {
   return loaded;
 }
 
-export async function createRuntime() {
+export async function createRuntime(): Promise<RuntimeShape> {
   loadLocalEnv();
   const store = new SQLiteStore(resolve(config.storage.databasePath));
   store.initialize();
@@ -50,8 +78,8 @@ export async function createRuntime() {
   const loadedPlugins = await initializePlugins(repository, config.plugins);
 
   const policy = new PermissionPolicy(config.policy);
-  let modelProvider = null;
-  const getModelProvider = () => {
+  let modelProvider: ModelProvider | null = null;
+  const getModelProvider = (): ModelProvider => {
     if (!modelProvider) {
       modelProvider = createModelProvider(config.model);
     }
@@ -59,9 +87,9 @@ export async function createRuntime() {
   };
   const outputDispatcher = new OutputDispatcher({ repository, plugins: loadedPlugins });
   const tools = new ToolRegistry({ repository, policy, getModelProvider, outputDispatcher });
-  const pluginCleanups = new Map();
-  const pluginMap = new Map(loadedPlugins.map((plugin) => [plugin.id, plugin]));
-  let runtime;
+  const pluginCleanups = new Map<string, () => Promise<void> | void>();
+  const pluginMap = new Map<string, RuntimePlugin>(loadedPlugins.map((plugin: RuntimePlugin) => [plugin.id, plugin]));
+  let runtime: RuntimeShape;
   const agentLoop = new AgentLoop(repository, policy, getModelProvider, tools);
   const scheduleManager = new ScheduleManager({
     repository,
@@ -83,7 +111,7 @@ export async function createRuntime() {
     pluginMap,
     pluginCleanups,
 
-    async input(content, options = {}) {
+    async input(content: unknown, options: GenericRecord = {}) {
       const pluginId = options.pluginId ?? "cli-input";
       if (!options.internal && !repository.isPluginEnabled(pluginId)) {
         throw new Error(`Input plugin is disabled: ${pluginId}`);
@@ -97,7 +125,7 @@ export async function createRuntime() {
       return { event, result: await agentLoop.process(event) };
     },
 
-    async review(query = "", options = {}) {
+    async review(query = "", options: { limit?: number } = {}) {
       const limit = options.limit ?? 12;
       const memories = query
         ? repository.searchMemories(query, limit)
@@ -127,7 +155,7 @@ export async function createRuntime() {
       };
     },
 
-    async startPlugin(pluginId) {
+    async startPlugin(pluginId: string) {
       const plugin = pluginMap.get(pluginId);
       if (!plugin) throw new Error(`Plugin not found: ${pluginId}`);
       if (pluginCleanups.has(pluginId)) return false;
@@ -152,7 +180,7 @@ export async function createRuntime() {
       }
     },
 
-    async stopPlugin(pluginId) {
+    async stopPlugin(pluginId: string) {
       const cleanup = pluginCleanups.get(pluginId);
       if (!cleanup) return false;
 
@@ -170,12 +198,12 @@ export async function createRuntime() {
       }
     },
 
-    async reloadPlugin(pluginId) {
+    async reloadPlugin(pluginId: string) {
       await runtime.stopPlugin(pluginId);
       return runtime.startPlugin(pluginId);
     },
 
-    async setPluginEnabled(pluginId, enabled) {
+    async setPluginEnabled(pluginId: string, enabled: boolean) {
       repository.setPluginEnabled(pluginId, enabled);
       const plugin = pluginMap.get(pluginId);
       if (plugin) {
@@ -216,7 +244,7 @@ export async function createRuntime() {
       return scheduleManager.processDueSchedules(now);
     },
 
-    async emitOutput(source = {}, content = {}) {
+    async emitOutput(source: GenericRecord = {}, content: GenericRecord = {}) {
       const sourceType = source.sourceType ?? SOURCE_TYPES.MANUAL;
       const sourceId = source.sourceId ?? null;
       const task = repository.createTask({
@@ -257,7 +285,7 @@ export async function createRuntime() {
       return results;
     },
 
-    async dispatchOutput(event) {
+    async dispatchOutput(event: OutputEvent & { content: GenericRecord; type: string }) {
       return outputDispatcher.send(event);
     },
 
@@ -290,7 +318,7 @@ export async function createRuntime() {
   return runtime;
 }
 
-function describeModelConfig(modelConfig) {
+function describeModelConfig(modelConfig: { provider: string; model: string; apiKeyEnv: string }): Record<string, unknown> {
   const provider = process.env.NEURA_MODEL_PROVIDER || modelConfig.provider;
   return {
     provider,
