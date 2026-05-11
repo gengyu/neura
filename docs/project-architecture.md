@@ -423,6 +423,140 @@ Neura 不是让模型只“写一句总结”，而是要求模型直接产出�
 
 - 尽量完成任务，而不是整条输入失败
 
+### 8.4 LangChain `createAgent()` Fit
+
+这里的核心判断是：
+
+- 适合局部引入
+- 不适合直接替换整个 Neura Runtime
+
+原因很简单。Neura 当前的核心价值并不只是“模型 + 工具循环”，而是一个完整的运行时系统，包含：
+
+- 输入插件体系
+- Agent Loop 编排
+- Repository / SQLite 持久化
+- 审批流
+- Schedule 调度
+- 输出路由
+- 常驻 daemon 生命周期
+
+LangChain 的 `createAgent()` 更适合承担的部分是：
+
+- 模型推理循环
+- 工具调用循环
+- structured output
+- streaming
+- middleware
+- human-in-the-loop
+
+也就是说，`createAgent()` 更像是 Neura 中“模型决策内核”的候选实现，而不是整个 Neura 的替代品。
+
+#### 8.4.1 Current Position
+
+当前模型相关职责主要集中在：
+
+- `packages/model/provider.ts`
+- `packages/core/agent-loop.ts`
+- `packages/tools/tools.ts`
+
+其中：
+
+- `provider.ts` 负责模型调用和工具循环
+- `agent-loop.ts` 负责业务编排
+- `tools.ts` 负责真实工具执行与审批
+
+#### 8.4.2 Recommended Integration Point
+
+推荐把 LangChain 放在 `Model Provider` 这一层，而不是 Runtime 最外层。
+
+当前架构：
+
+```mermaid
+flowchart LR
+  A["Input Plugins"] --> B["Runtime"]
+  B --> C["Agent Loop"]
+  C --> D["Custom Model Provider"]
+  C --> E["Tool Registry"]
+  C --> F["Repository / SQLite"]
+  C --> G["Memory / Schedule / Output"]
+```
+
+推荐的局部接入方式：
+
+```mermaid
+flowchart LR
+  A["Input Plugins"] --> B["Runtime"]
+  B --> C["Agent Loop"]
+  C --> D["LangChain-backed Model Provider"]
+  D --> E["LangChain createAgent()"]
+  E --> F["Neura Tool Adapters"]
+  C --> G["Repository / SQLite"]
+  C --> H["Memory / Schedule / Output"]
+```
+
+这个版本里：
+
+- Runtime 不动
+- Repository 不动
+- Schedule / Output / Approval 不动
+- 只替换模型分析和工具循环的实现内核
+
+#### 8.4.3 Best Candidate Scenarios
+
+最适合先尝试 LangChain `createAgent()` 的任务类型：
+
+- `query`
+- `memory_query`
+- `action_request`
+- `summarize_current`
+
+这些任务有几个共同点：
+
+- 需要工具循环
+- 需要结构化结果
+- 适合做 streaming
+- 更接近 agent 范式
+
+#### 8.4.4 Not Recommended for Full Replacement
+
+不建议直接交给 `createAgent()` 的层：
+
+- `packages/core/runtime.ts`
+- `packages/storage/repository.ts`
+- `packages/storage/sqlite.ts`
+- `packages/core/schedule-manager.ts`
+- `packages/core/output-routing.ts`
+- `packages/core/output-dispatcher.ts`
+- 插件加载与 daemon 生命周期
+
+这些层本质上是“系统运行时基础设施”，不是 LangChain agent 的强项。
+
+#### 8.4.5 Practical Migration Strategy
+
+如果后续决定接入 LangChain，推荐按下面顺序推进：
+
+1. 保留 `runtime.ts`、`agent-loop.ts`、`repository.ts` 不动
+2. 在 `packages/model/` 新增一个 LangChain provider
+3. 把现有 `ToolRegistry` 包一层 agent tool adapter
+4. 先只接 `query` / `memory_query` 两类任务
+5. 验证 structured output、tool calling、approval flow 是否仍能闭环
+6. 再考虑扩展到 `summarize_current` 和更复杂任务
+
+#### 8.4.6 Final Recommendation
+
+如果目标是：
+
+- 让模型工具循环更标准化
+- 为后续 streaming / HITL / middleware 做准备
+
+那么 LangChain `createAgent()` 是合适的。
+
+如果目标是：
+
+- 把整个 Neura 运行时迁移成 LangChain 风格
+
+那么当前阶段不建议这么做。
+
 ---
 
 ## 9. Tool and Approval Architecture
