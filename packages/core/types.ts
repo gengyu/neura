@@ -1,14 +1,14 @@
 export type GenericRecord = Record<string, unknown>;
 
-export type InputEvent = {
+export interface InputEvent {
   id: unknown;
   type?: string;
   pluginId?: string;
   content: unknown;
   metadata?: GenericRecord;
-};
+}
 
-export type NormalizedInputSignals = {
+export interface NormalizedInputSignals {
   userRequestedResponse: boolean;
   containsQuestion: boolean;
   containsActionRequest: boolean;
@@ -20,9 +20,20 @@ export type NormalizedInputSignals = {
   likelyEphemeral: boolean;
   likelyDecision: boolean;
   likelyPreference: boolean;
-};
+}
 
-export type NormalizedInput = {
+export interface NormalizedInputFile {
+  path: string;
+  extension: string | null;
+  kind: string | null;
+}
+
+export interface NormalizedInputImage {
+  path: string;
+  mimeType: string;
+}
+
+export interface NormalizedInput {
   sourcePluginId: string;
   inputType: string;
   sourceKind: string;
@@ -31,22 +42,15 @@ export type NormalizedInput = {
   normalizedText: string;
   summaryHint: string;
   keywords: string[];
-  file: {
-    path: string;
-    extension: string | null;
-    kind: string | null;
-  } | null;
-  image: {
-    path: string;
-    mimeType: string;
-  } | null;
+  file: NormalizedInputFile | null;
+  image: NormalizedInputImage | null;
   metadata: GenericRecord;
   signals: NormalizedInputSignals;
   memorySearchQuery: string;
   taskType: string;
-};
+}
 
-export type MemoryRecord = {
+export interface MemoryRecord {
   id: unknown;
   summary: string;
   content: string;
@@ -54,24 +58,28 @@ export type MemoryRecord = {
   importance?: unknown;
   confidence?: unknown;
   [key: string]: unknown;
-};
+}
 
-export type MemoryDecision = {
+export interface MemoryDecision {
   shouldRemember: boolean;
   memoryType: string | null;
   reason: string | null;
   actionHint: string;
-};
+}
 
-export type OutputPolicy = {
+export interface OutputPolicy {
   shouldOutput: boolean;
   type: string;
   reason: string;
   priority: string;
   preferredPluginIds?: string[];
+}
+
+export type PartialOutputDecision = Partial<OutputPolicy> & {
+  outputType?: string;
 };
 
-export type AnalysisResult = {
+export interface AnalysisResult {
   provider?: unknown;
   category?: string;
   intent?: string;
@@ -86,38 +94,42 @@ export type AnalysisResult = {
   relatedMemories?: MemoryRecord[];
   taskType?: string;
   memoryDecision?: MemoryDecision;
-  outputDecision?: Partial<OutputPolicy> & { outputType?: string };
+  outputDecision?: PartialOutputDecision;
   [key: string]: unknown;
-};
+}
 
-export type SynthesisResult = {
+export interface SynthesisResult {
   summary: string;
   bullets: string[];
   actions: string[];
   themes: string[];
   sourceMemoryIds: unknown[];
-};
+}
 
-export type SchedulePlan = {
+export interface ScheduleContent {
+  text?: string;
+}
+
+export interface SchedulePlan {
   id?: unknown;
   name: string;
   mode: string;
-  content?: { text?: string };
+  content?: ScheduleContent;
   runAt: string | null;
   intervalMs: number | null;
   status?: string;
-};
+}
 
-export type DecisionResult = {
+export interface DecisionResult {
   taskType: string;
   actions: string[];
   memoryDecision: MemoryDecision;
   schedulePlan: SchedulePlan | null;
   synthesisMode: string;
   output: OutputPolicy;
-};
+}
 
-export type OutputEvent = {
+export interface OutputEvent {
   id?: unknown;
   pluginId?: string;
   sourceType?: string;
@@ -127,22 +139,40 @@ export type OutputEvent = {
   priority?: string;
   preferredPluginIds?: string[];
   [key: string]: unknown;
-};
+}
 
-export type OutputPlugin = {
+export interface CreateTaskPayload {
+  sourceType?: string;
+  sourceId?: unknown;
+  inputEventId?: unknown;
+  type: string;
+}
+
+export interface CreateOutputEventPayload {
+  pluginId: string;
+  sourceType?: string;
+  sourceId?: unknown;
+  type: string;
+  content: GenericRecord;
+  status?: string;
+}
+
+export interface OutputPluginSendInput {
+  event: OutputEvent;
+  content: GenericRecord;
+  type: string;
+  repository: OutputDispatchRepository;
+}
+
+export interface OutputPlugin {
   id: string;
   type: string;
   direction?: string;
   enabled?: boolean;
   _enabled?: boolean;
-  send?: (input: {
-    event: OutputEvent;
-    content: GenericRecord;
-    type: string;
-    repository: RepositoryLike;
-  }) => Promise<void> | void;
+  send?: (input: OutputPluginSendInput) => Promise<void> | void;
   [key: string]: unknown;
-};
+}
 
 export type ToolExecutor = {
   searchMemory: (query: string) => unknown;
@@ -159,16 +189,26 @@ export type ToolExecutor = {
   ) => unknown;
 };
 
-export type ModelProvider = {
+export interface AnalyzeInputContext {
+  normalizedInput: NormalizedInput;
+  relatedMemories: MemoryRecord[];
+}
+
+export interface AnalyzeInputOptions {
+  tools: unknown[];
+  executeTool?: (name: string, input: ToolInput) => Promise<unknown>;
+}
+
+export interface ModelProvider {
   analyzeInput: (
     inputEvent: InputEvent,
-    context: { normalizedInput: NormalizedInput; relatedMemories: MemoryRecord[] },
-    options: { tools: unknown[]; executeTool?: ((name: string, input: ToolInput) => Promise<unknown>) | undefined }
+    context: AnalyzeInputContext,
+    options: AnalyzeInputOptions
   ) => Promise<AnalysisResult>;
   callModel?: (prompt: string, systemMessage?: string) => Promise<{ content?: string } | unknown>;
-};
+}
 
-export type ToolInput = {
+export interface ToolInput {
   query?: string;
   path?: string;
   content?: string;
@@ -181,25 +221,79 @@ export type ToolInput = {
   method?: string;
   headers?: Record<string, string>;
   body?: string | null;
-};
+}
 
-export type RepositoryLike = {
-  createTask: (payload: GenericRecord) => { id: unknown };
-  updateInputEventStatus: (id: unknown, status: string) => void;
+export interface SimilarMemoryMatch {
+  memory: MemoryRecord;
+  score: number;
+}
+
+export interface ScheduleRunPayload {
+  nextRunAt: string | null;
+  status: string;
+}
+
+export interface LoggingRepository {
   log: (level: string, type: string, message: string, payload?: GenericRecord) => void;
+}
+
+export interface InputEventRepository {
+  updateInputEventStatus: (id: unknown, status: string) => void;
+}
+
+export interface TaskRepository {
+  createTask: (payload: CreateTaskPayload | unknown, maybeType?: string) => { id: unknown };
+  finishTask: (id: unknown, status: string, result?: unknown, error?: string | null) => void;
+}
+
+export interface MemorySearchRepository {
   searchMemories: (query: string, limit: number) => MemoryRecord[];
-  createSchedule: (schedulePlan: SchedulePlan) => SchedulePlan & { id: unknown };
-  finishTask: (id: unknown, status: string, result?: unknown, error?: string) => void;
-  findSimilarMemory: (payload: GenericRecord, threshold: number) => { memory: MemoryRecord; score: number } | null;
+}
+
+export interface MemoryPersistenceRepository extends LoggingRepository {
+  findSimilarMemory: (payload: GenericRecord, threshold: number) => SimilarMemoryMatch | null;
   updateMemory: (id: unknown, payload: GenericRecord) => MemoryRecord;
   createMemory: (payload: GenericRecord) => MemoryRecord;
-  createOutputEvent?: (payload: GenericRecord) => OutputEvent;
-  updateOutputEventStatus?: (id: unknown, status: string, content?: GenericRecord) => void;
-  listPlugins?: () => OutputPlugin[];
-  getDueSchedules?: (nowIso: string) => SchedulePlan[];
-  markScheduleRun?: (id: unknown, payload: { nextRunAt: string | null; status: string }) => void;
-};
+}
 
-export type RuntimeLike = {
+export interface ScheduleRepository {
+  createSchedule: (schedulePlan: SchedulePlan) => SchedulePlan & { id: unknown };
+  getDueSchedules?: (nowIso: string) => SchedulePlan[];
+  markScheduleRun?: (id: unknown, payload: ScheduleRunPayload) => void;
+}
+
+export interface OutputDispatchRepository extends LoggingRepository {
+  createOutputEvent?: (payload: CreateOutputEventPayload) => OutputEvent;
+  updateOutputEventStatus?: (id: unknown, status: string, content?: GenericRecord) => void;
+}
+
+export interface PluginListRepository {
+  listPlugins?: () => OutputPlugin[];
+}
+
+export interface PluginAdminRepository extends PluginListRepository {
+  upsertPlugin: (plugin: OutputPlugin & { config?: Record<string, unknown> }, status: string) => void;
+  pruneMissingPlugins: (ids: string[]) => void;
+}
+
+export interface AgentLoopRepository extends TaskRepository, InputEventRepository, LoggingRepository, MemorySearchRepository, MemoryPersistenceRepository, ScheduleRepository {}
+
+export interface ScheduleManagerRepository extends TaskRepository, ScheduleRepository, OutputRoutingRepository {}
+
+export interface OutputRoutingRepository extends PluginListRepository {}
+
+export interface RuntimeBootstrapRepository extends AgentLoopRepository, OutputDispatchRepository, PluginAdminRepository {}
+
+export interface RepositoryLike extends RuntimeBootstrapRepository {}
+
+export interface RuntimeStatusRepository {
+  setAgentStatus?: (id: unknown, status: string) => void;
+  setRuntimeState?: (key: string, value: GenericRecord) => void;
+  listPlugins?: () => OutputPlugin[];
+  getRuntimeState?: (key: string) => { value?: GenericRecord } | null;
+  getActiveAgentId?: () => unknown;
+}
+
+export interface RuntimeLike {
   input: (content: string, options?: GenericRecord) => Promise<unknown>;
-};
+}

@@ -1,11 +1,11 @@
 import { OUTPUT_STATUSES, SOURCE_TYPES } from "../shared/types.ts";
-import type { GenericRecord, OutputEvent, OutputPlugin, RepositoryLike } from "./types.ts";
+import type { GenericRecord, OutputDispatchRepository, OutputEvent, OutputPlugin } from "./types.ts";
 
 export class OutputDispatcher {
-  repository: RepositoryLike;
+  repository: OutputDispatchRepository;
   plugins: OutputPlugin[] = [];
 
-  constructor({ repository, plugins }: { repository: RepositoryLike; plugins: OutputPlugin[] }) {
+  constructor({ repository, plugins }: { repository: OutputDispatchRepository; plugins: OutputPlugin[] }) {
     this.repository = repository;
     this.setPlugins(plugins);
   }

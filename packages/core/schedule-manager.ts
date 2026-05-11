@@ -1,16 +1,16 @@
 import { RUNTIME_EVENT_TYPES, SCHEDULE_STATUSES, SOURCE_TYPES, TASK_STATUSES } from "../shared/types.ts";
 import { buildOutputDecision } from "./output-decision.ts";
 import { buildOutputRoute } from "./output-routing.ts";
-import type { OutputPlugin, RepositoryLike, RuntimeLike, SchedulePlan } from "./types.ts";
+import type { RuntimeLike, ScheduleManagerRepository, SchedulePlan } from "./types.ts";
 import type { OutputDispatcher } from "./output-dispatcher.ts";
 
 export class ScheduleManager {
-  repository: RepositoryLike;
+  repository: ScheduleManagerRepository;
   runtime: RuntimeLike;
   outputDispatcher: OutputDispatcher;
   running: boolean;
 
-  constructor({ repository, runtime, outputDispatcher }: { repository: RepositoryLike; runtime: RuntimeLike; outputDispatcher: OutputDispatcher }) {
+  constructor({ repository, runtime, outputDispatcher }: { repository: ScheduleManagerRepository; runtime: RuntimeLike; outputDispatcher: OutputDispatcher }) {
     this.repository = repository;
     this.runtime = runtime;
     this.outputDispatcher = outputDispatcher;

@@ -15,6 +15,10 @@ type InputContent = string | {
   [key: string]: unknown;
 } | null | undefined;
 
+function isStructuredContent(content: InputContent): content is Exclude<InputContent, string | null | undefined> {
+  return typeof content === "object" && content !== null;
+}
+
 export function normalizeInputEvent(inputEvent: InputEvent): NormalizedInput {
   const content = inputEvent.content as InputContent;
   const inputType = inputEvent.type ?? "event";
@@ -99,6 +103,7 @@ function buildNormalizedText(inputType: string, content: InputContent): string {
 function buildSummaryHint(inputType: string, content: InputContent): string {
   if (inputType === "image") return "这是一个图片/截图输入，需要理解视觉内容及用户上下文。";
   if (inputType === "file") {
+    if (!isStructuredContent(content)) return "这是一个文件输入，需要基于文件内容或元信息提炼关键信息。";
     if (content?.kind === "code") return "这是一个代码文件输入，需要提取目的、模块和关键变化。";
     if (content?.kind === "binary-document") return "这是一个二进制文档输入，可能需要先形成高层摘要。";
     return "这是一个文件输入，需要基于文件内容或元信息提炼关键信息。";
@@ -108,6 +113,7 @@ function buildSummaryHint(inputType: string, content: InputContent): string {
 }
 
 function buildFileDescriptor(content: InputContent): NormalizedInput["file"] {
+  if (!isStructuredContent(content)) return null;
   if (!content?.path) return null;
   return {
     path: content.path,
@@ -117,6 +123,7 @@ function buildFileDescriptor(content: InputContent): NormalizedInput["file"] {
 }
 
 function buildImageDescriptor(content: InputContent): NormalizedInput["image"] {
+  if (!isStructuredContent(content)) return null;
   if (!content?.path || !content?.mimeType) return null;
   return {
     path: content.path,

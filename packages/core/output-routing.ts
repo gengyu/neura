@@ -1,5 +1,5 @@
 import { SOURCE_TYPES } from "../shared/types.ts";
-import type { OutputEvent, OutputPlugin, RepositoryLike } from "./types.ts";
+import type { OutputEvent, OutputPlugin, OutputRoutingRepository } from "./types.ts";
 
 type OutputRouteDecision = {
   preferredPluginIds?: string[];
@@ -14,7 +14,7 @@ export function buildOutputRoute({
 }: {
   outputEvent?: OutputEvent;
   decision?: OutputRouteDecision;
-  repository: RepositoryLike;
+  repository: OutputRoutingRepository;
 }): { preferredPluginIds: string[]; deliveryMode: string; shouldPersistLog: boolean } {
   const enabledOutputs = (repository.listPlugins?.() ?? [])
     .filter((plugin: OutputPlugin) => plugin.direction === "output" && plugin.enabled);

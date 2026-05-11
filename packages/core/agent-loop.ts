@@ -5,12 +5,12 @@ import { buildDecision } from "./decision-engine.ts";
 import { buildCaptureResult } from "./capture-result.ts";
 import { writeMemoryForDecision } from "./memory-writer.ts";
 import type {
+  AgentLoopRepository,
   AnalysisResult,
   DecisionResult,
   InputEvent,
   ModelProvider,
   NormalizedInput,
-  RepositoryLike,
   SynthesisResult,
   ToolExecutor,
   ToolInput
@@ -161,13 +161,13 @@ const AVAILABLE_TOOLS = [
 ];
 
 export class AgentLoop {
-  repository: RepositoryLike;
+  repository: AgentLoopRepository;
   policy: unknown;
   getModelProvider: () => ModelProvider;
   tools?: ToolExecutor;
 
   constructor(
-      repository: RepositoryLike,
+      repository: AgentLoopRepository,
       policy: unknown,
       getModelProvider: () => ModelProvider,
       tools?: ToolExecutor

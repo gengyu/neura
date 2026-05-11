@@ -14,7 +14,7 @@ import { synthesizeResult } from "./result-synthesizer.ts";
 import { ScheduleManager } from "./schedule-manager.ts";
 import { buildOutputDecision } from "./output-decision.ts";
 import { buildOutputRoute } from "./output-routing.ts";
-import type { GenericRecord, InputEvent, ModelProvider, OutputEvent, OutputPlugin, RepositoryLike } from "./types.ts";
+import type { GenericRecord, InputEvent, ModelProvider, OutputEvent, OutputPlugin, RuntimeBootstrapRepository } from "./types.ts";
 
 type PluginOverride = { id: string; enabled?: boolean; config?: Record<string, unknown> };
 type RuntimePlugin = OutputPlugin & {
@@ -40,10 +40,7 @@ type RuntimeShape = {
   [key: string]: unknown;
 };
 
-async function initializePlugins(repository: RepositoryLike & {
-  upsertPlugin: (plugin: RuntimePlugin, status: string) => void;
-  pruneMissingPlugins: (ids: string[]) => void;
-}, configPlugins?: PluginOverride[]): Promise<RuntimePlugin[]> {
+async function initializePlugins(repository: RuntimeBootstrapRepository, configPlugins?: PluginOverride[]): Promise<RuntimePlugin[]> {
   const loaded = await loadPlugins() as RuntimePlugin[];
   const overrideMap = new Map<string, PluginOverride>();
   if (Array.isArray(configPlugins)) {

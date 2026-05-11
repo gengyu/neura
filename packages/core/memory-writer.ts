@@ -6,8 +6,8 @@ import type {
   InputEvent,
   MemoryDecision,
   MemoryRecord,
+  MemoryPersistenceRepository,
   NormalizedInput,
-  RepositoryLike,
   SynthesisResult
 } from "./types.ts";
 
@@ -19,7 +19,7 @@ export function writeMemoryForDecision({
   decision,
   synthesis = null
 }: {
-  repository: RepositoryLike;
+  repository: MemoryPersistenceRepository;
   inputEvent: InputEvent;
   normalizedInput: NormalizedInput;
   analysis: AnalysisResult;
