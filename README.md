@@ -30,6 +30,12 @@ Neura 是一个无 UI 优先、长期运行的个人智能体运行时原型。
 - Bun Runtime
 - `bun:sqlite` 本地存储
 
+## 架构文档
+
+如果目标是尽快完整理解整个项目，优先阅读：
+
+- [docs/project-architecture.md](/Users/gengyu/github/neura/docs/project-architecture.md)
+
 ## 使用
 
 ```bash
