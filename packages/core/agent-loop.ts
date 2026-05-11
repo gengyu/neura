@@ -4,6 +4,7 @@ import { synthesizeCurrentInput, synthesizeResult } from "./result-synthesizer.t
 import { buildDecision } from "./decision-engine.ts";
 import { buildCaptureResult } from "./capture-result.ts";
 import { writeMemoryForDecision } from "./memory-writer.ts";
+import { recallMemories } from "./memory-recall.ts";
 import type {
   AgentLoopRepository,
   AnalysisResult,
@@ -195,7 +196,9 @@ export class AgentLoop {
       const modelProvider = this.getModelProvider();
       
       // === Recall: 记忆召回，搜索相关历史记忆提供上下文 ===
-      const contextMemories = this.repository.searchMemories(normalizedInput.memorySearchQuery, 5);
+      const recall = await recallMemories({ repository: this.repository, normalizedInput, limit: 5 });
+      normalizedInput.memorySearchQuery = recall.query;
+      const contextMemories = recall.memories;
       const toolset = this.tools;
       const executeTool = toolset
         ? async (name: string, input: ToolInput) => {
@@ -287,7 +290,7 @@ export class AgentLoop {
         const memoryAnswerSynthesis: AgentLoopSynthesis = await synthesizeResult({
           mode: "answer",
           query: normalizedInput.normalizedText,
-          memories: relatedMemories.length > 0 ? relatedMemories : this.repository.searchMemories(normalizedInput.memorySearchQuery, 8),
+          memories: relatedMemories.length > 0 ? relatedMemories : (await recallMemories({ repository: this.repository, normalizedInput, limit: 8 })).memories,
           normalizedInput,
           analysis: effectiveAnalysis,
           modelProvider
@@ -318,7 +321,7 @@ export class AgentLoop {
 
       // === 3. Persist: 写入记忆、构建捕获结果并完成任务 ===
       // === MemoryWrite: 根据决策写入记忆（新增/更新/跳过）===
-      const { memory, memoryAction } = writeMemoryForDecision({
+      const { memory, memoryAction } = await writeMemoryForDecision({
         repository: this.repository,
         inputEvent,
         normalizedInput,

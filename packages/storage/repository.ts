@@ -13,7 +13,7 @@ import {
   TASK_STATUSES
 } from "../shared/types.ts";
 import { similarityScore } from "../memory/memory.ts";
-import { createMemoryVector, scoreMemoryVector } from "../memory/vector.ts";
+import { searchMemoryRecords } from "../memory/langchain-memory.ts";
 
 export class Repository {
   constructor(store) {
@@ -301,7 +301,6 @@ export class Repository {
       INSERT INTO memories (id, agent_id, content, summary, tags, source_input_id, source_type, source_id, importance, confidence, created_at, updated_at)
       VALUES (${this.store.value(memory.id)}, ${this.store.value(agentId)}, ${this.store.value(content)}, ${this.store.value(summary)}, ${this.store.json(tags)}, ${this.store.value(sourceInputId)}, ${this.store.value(sourceType)}, ${this.store.value(sourceId)}, ${importance}, ${confidence}, ${this.store.value(now)}, ${this.store.value(now)});
     `);
-    this.upsertMemoryVector(memory);
     return memory;
   }
 
@@ -341,7 +340,6 @@ export class Repository {
       confidence: nextConfidence,
       updatedAt: now
     };
-    this.upsertMemoryVector(memory);
     return memory;
   }
 
@@ -361,7 +359,6 @@ export class Repository {
       tags: normalizedTags,
       updatedAt: now
     };
-    this.upsertMemoryVector(memory);
     return memory;
   }
 
@@ -385,8 +382,8 @@ export class Repository {
     `).map(decodeMemory);
   }
 
-  searchMemories(query, limit = 20) {
-    const vectorMatches = this.searchMemoriesByVector(query, limit);
+  async searchMemories(query, limit = 20) {
+    const vectorMatches = await searchMemoryRecords(query, this.listMemories(1_000), limit);
     if (vectorMatches.length > 0) return vectorMatches;
     const like = `%${query}%`;
     return this.store.query(`
@@ -399,52 +396,10 @@ export class Repository {
     `).map((memory) => ({ ...decodeMemory(memory), vectorScore: 0 }));
   }
 
-  searchMemoriesByVector(query, limit = 20) {
-    const agentId = this.getActiveAgentId();
-    const queryVector = createMemoryVector(query);
-    const rows = this.store.query(`
-      SELECT m.id, m.agent_id AS agentId, m.content, m.summary, m.tags, m.source_input_id AS sourceInputId, m.source_type AS sourceType, m.source_id AS sourceId, m.importance, m.confidence, m.created_at AS createdAt, m.updated_at AS updatedAt, v.vector
-      FROM memories m
-      JOIN memory_vectors v ON v.memory_id = m.id
-      WHERE m.agent_id = ${this.store.value(agentId)}
-      ORDER BY m.updated_at DESC
-      LIMIT 500;
-    `);
-    return rows
-      .map((row) => {
-        const vector = parseJson(row.vector) ?? [];
-        const score = scoreMemoryVector(queryVector, vector);
-        const { vector: _vector, ...memory } = row;
-        return { ...decodeMemory(memory), vectorScore: Number(score.toFixed(6)) };
-      })
-      .filter((memory) => memory.vectorScore > 0.12)
-      .sort((a, b) => b.vectorScore - a.vectorScore || b.importance - a.importance)
-      .slice(0, Number(limit));
-  }
-
-  upsertMemoryVector(memory) {
-    const now = nowIso();
-    const agentId = memory.agentId ?? this.getActiveAgentId();
-    const vector = createMemoryVector(`${memory.summary}\n${memory.content}\n${(memory.tags ?? []).join(" ")}`);
-    this.store.run(`
-      INSERT INTO memory_vectors (memory_id, agent_id, vector, updated_at)
-      VALUES (${this.store.value(memory.id)}, ${this.store.value(agentId)}, ${this.store.json(vector)}, ${this.store.value(now)})
-      ON CONFLICT(memory_id) DO UPDATE SET vector = excluded.vector, agent_id = excluded.agent_id, updated_at = excluded.updated_at;
-    `);
-  }
-
-  reindexMemoryVectors() {
-    const memories = this.listMemories(10_000);
-    for (const memory of memories) {
-      this.upsertMemoryVector(memory);
-    }
-    return memories.length;
-  }
-
-  findSimilarMemory({ content, tags }, threshold = 0.78) {
+  async findSimilarMemory({ content, tags }, threshold = 0.78) {
     const tagQueries = (tags ?? []).filter((tag) => tag !== "未分类").slice(0, 4);
     const candidates = tagQueries.length > 0
-      ? tagQueries.flatMap((tag) => this.searchMemories(tag, 8))
+      ? (await Promise.all(tagQueries.map((tag) => this.searchMemories(tag, 8)))).flat()
       : this.listMemories(12);
     const unique = new Map();
     for (const candidate of candidates) {
@@ -693,7 +648,6 @@ export class Repository {
         (SELECT COUNT(*) FROM input_events WHERE agent_id = ${quotedAgentId}) AS inputEvents,
         (SELECT COUNT(*) FROM tasks WHERE agent_id = ${quotedAgentId}) AS tasks,
         (SELECT COUNT(*) FROM memories WHERE agent_id = ${quotedAgentId}) AS memories,
-        (SELECT COUNT(*) FROM memory_vectors WHERE agent_id = ${quotedAgentId}) AS memoryVectors,
         (SELECT COUNT(*) FROM output_events WHERE agent_id = ${quotedAgentId}) AS outputEvents,
         (SELECT COUNT(*) FROM confirmation_requests WHERE agent_id = ${quotedAgentId}) AS approvals,
         (SELECT COUNT(*) FROM schedules WHERE agent_id = ${quotedAgentId}) AS schedules,
@@ -705,7 +659,6 @@ export class Repository {
       "input_events",
       "tasks",
       "memories",
-      "memory_vectors",
       "output_events",
       "confirmation_requests",
       "schedules",

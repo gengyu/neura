@@ -247,11 +247,12 @@ export interface TaskRepository {
 }
 
 export interface MemorySearchRepository {
-  searchMemories: (query: string, limit: number) => MemoryRecord[];
+  searchMemories: (query: string, limit: number) => Promise<MemoryRecord[]>;
+  listMemories?: (limit: number) => MemoryRecord[];
 }
 
 export interface MemoryPersistenceRepository extends LoggingRepository {
-  findSimilarMemory: (payload: GenericRecord, threshold: number) => SimilarMemoryMatch | null;
+  findSimilarMemory: (payload: GenericRecord, threshold: number) => Promise<SimilarMemoryMatch | null>;
   updateMemory: (id: unknown, payload: GenericRecord) => MemoryRecord;
   createMemory: (payload: GenericRecord) => MemoryRecord;
 }

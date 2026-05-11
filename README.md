@@ -13,7 +13,7 @@ Neura 是一个无 UI 优先、长期运行的个人智能体运行时原型。
 - 模型推理抽象，支持 DeepSeek OpenAI-compatible 和 Anthropic-compatible 入口
 - 摘要与标签生成
 - 长期记忆判断、写入、相似记忆更新
-- 向量化记忆检索与记忆索引重建
+- LangChain 记忆检索
 - SQLite 本地存储
 - CLI 输出插件
 - 系统通知输出插件
@@ -38,7 +38,6 @@ bun run neura -- input "我想做一个常驻运行的智能体"
 bun run neura -- input-image ./data/screenshots/demo.png
 bun run neura -- memory list
 bun run neura -- memory search "智能体"
-bun run neura -- memory reindex
 bun run neura -- agents list
 bun run neura -- agents create "Research Agent" --id research-agent
 bun run neura -- agents use research-agent
@@ -167,7 +166,7 @@ bun run start
 open http://127.0.0.1:8790
 ```
 
-管理界面由 `admin-ui-output` 插件提供，可以查看状态、切换/创建 Agent、提交输入、启停插件、搜索记忆、重建记忆索引、处理审批、创建定时任务，并查看输入、任务、输出、日志和工具调用详情。
+管理界面由 `admin-ui-output` 插件提供，可以查看状态、切换/创建 Agent、提交输入、启停插件、搜索记忆、处理审批、创建定时任务，并查看输入、任务、输出、日志和工具调用详情。
 
 ## 文件夹监听
 

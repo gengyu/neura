@@ -11,7 +11,7 @@ import type {
   SynthesisResult
 } from "./types.ts";
 
-export function writeMemoryForDecision({
+export async function writeMemoryForDecision({
   repository,
   inputEvent,
   normalizedInput,
@@ -25,7 +25,7 @@ export function writeMemoryForDecision({
   analysis: AnalysisResult;
   decision: DecisionResult;
   synthesis?: SynthesisResult | null;
-}): { memory: MemoryRecord | null; memoryAction: string } {
+}): Promise<{ memory: MemoryRecord | null; memoryAction: string }> {
   const memoryDecision = decision.memoryDecision;
   if (!memoryDecision.shouldRemember) {
     return { memory: null, memoryAction: "skipped" };
@@ -38,7 +38,7 @@ export function writeMemoryForDecision({
     memoryDecision,
     synthesis
   });
-  const similar = repository.findSimilarMemory(
+  const similar = await repository.findSimilarMemory(
     memoryPayload,
     shouldUseStrictSimilarity(memoryDecision) ? 0.86 : 0.78
   );

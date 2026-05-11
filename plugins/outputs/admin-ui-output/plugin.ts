@@ -109,12 +109,8 @@ export default {
 
     app.get("/api/memories", async (request) => {
       const query = request.query?.query;
-      return query ? runtime.repository.searchMemories(query) : runtime.repository.listMemories(50);
+      return query ? await runtime.repository.searchMemories(query) : runtime.repository.listMemories(50);
     });
-    app.post("/api/memories/reindex", async () => ({
-      ok: true,
-      count: runtime.repository.reindexMemoryVectors()
-    }));
 
     app.get("/api/inputs", async () => runtime.repository.listInputEvents(50));
     app.get("/api/tasks", async () => runtime.repository.listTasks(50));

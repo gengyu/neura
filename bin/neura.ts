@@ -68,7 +68,6 @@ memory.command("tag")
   .option("--add <tags...>", "追加这些标签")
   .option("--remove <tags...>", "移除这些标签")
   .action(updateMemoryTags);
-memory.command("reindex").description("重建记忆向量索引").action(reindexMemories);
 program.command("review").description("整理最近记录或某个主题").argument("[query...]", "可选主题").action(review);
 
 const agents = program.command("agents").description("Agent 管理");
@@ -421,7 +420,7 @@ async function listMemories() {
 
 async function searchMemories(queryParts) {
   const runtime = await createRuntime();
-  const memories = runtime.repository.searchMemories(queryParts.join(" ").trim());
+  const memories = await runtime.repository.searchMemories(queryParts.join(" ").trim());
   if (memories.length === 0) return console.log("没有找到相关记忆。");
   for (const memory of memories) {
     console.log(`${memory.id}`);
@@ -456,12 +455,6 @@ async function updateMemoryTags(memoryId, options = {}) {
   const updated = runtime.repository.updateMemoryTags(memoryId, nextTags);
   console.log(`已更新记忆标签: ${updated.id}`);
   console.log(`标签: ${updated.tags.join(", ") || "无"}`);
-}
-
-async function reindexMemories() {
-  const runtime = await createRuntime();
-  const count = runtime.repository.reindexMemoryVectors();
-  console.log(`已重建记忆向量索引: ${count}`);
 }
 
 async function review(queryParts = []) {

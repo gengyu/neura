@@ -125,7 +125,7 @@ export async function createRuntime(): Promise<RuntimeShape> {
     async review(query = "", options: { limit?: number } = {}) {
       const limit = options.limit ?? 12;
       const memories = query
-        ? repository.searchMemories(query, limit)
+        ? await repository.searchMemories(query, limit)
         : repository.listMemories(limit);
       return synthesizeResult({
         mode: "review",

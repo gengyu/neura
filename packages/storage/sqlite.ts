@@ -146,12 +146,6 @@ export class SQLiteStore {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
-      );`,
-      `CREATE TABLE IF NOT EXISTS memory_vectors (
-        memory_id TEXT PRIMARY KEY,
-        agent_id TEXT NOT NULL DEFAULT 'default-agent',
-        vector TEXT NOT NULL,
-        updated_at TEXT NOT NULL
       );`
     ];
     for (const statement of statements) {
@@ -171,6 +165,7 @@ export class SQLiteStore {
     this.ensureColumn("confirmation_requests", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
     this.ensureColumn("schedules", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
     this.ensureColumn("logs", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.run("DROP TABLE IF EXISTS memory_vectors;");
   }
 
   ensureColumn(table, column, definition) {

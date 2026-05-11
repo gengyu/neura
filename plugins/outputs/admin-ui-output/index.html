@@ -445,7 +445,6 @@
         view.innerHTML = `
           <div class="view-head">
             <h2>总览</h2>
-            <button class="btn" id="quickReindex">重建记忆索引</button>
           </div>
           <div class="grid">
             ${metric("输入事件", counts.inputEvents)}
@@ -466,7 +465,6 @@
             </div>
           </div>
         `;
-        document.querySelector("#quickReindex").addEventListener("click", () => reindexMemories());
       }
 
       async function renderInput() {
@@ -590,7 +588,6 @@
         view.innerHTML = `
           <div class="view-head">
             <h2>记忆</h2>
-            <button class="btn" id="reindexMemory">重建索引</button>
           </div>
           <div class="toolbar">
             <input id="memoryQuery" placeholder="搜索记忆" />
@@ -600,7 +597,6 @@
           <div id="memoryTable"></div>
         `;
         const input = document.querySelector("#memoryQuery");
-        document.querySelector("#reindexMemory").addEventListener("click", () => reindexMemories());
         document.querySelector("#searchMemory").addEventListener("click", () => load(input.value.trim()));
         document.querySelector("#clearMemorySearch").addEventListener("click", () => { input.value = ""; load(); });
         input.addEventListener("keydown", (event) => { if (event.key === "Enter") load(input.value.trim()); });
@@ -716,14 +712,6 @@
         const rows = await api(path);
         view.innerHTML = `<div class="view-head"><h2>${title}</h2></div>${renderTable(columns, rows)}`;
         bindDetailButtons(rows);
-      }
-
-      async function reindexMemories() {
-        await runAction(async () => {
-          const result = await api("/api/memories/reindex", { method: "POST" });
-          return result;
-        }, "记忆索引已重建");
-        await refreshChrome();
       }
 
       async function runAction(action, successMessage) {
