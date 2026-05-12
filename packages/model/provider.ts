@@ -11,13 +11,13 @@ const AnalysisSchema = z.object({
   taskType: z.string().default("context_capture"),
   category: z.string().default("context_summary"),
   intent: z.string().default("capture_context"),
-  remembered: z.boolean(),
+  remembered: z.boolean().default(false),
   memoryType: z.string().default("上下文总结"),
   memoryReason: z.string().default("contains_long_term_value"),
   memoryActionHint: z.enum(["create", "update", "create_or_update", "skip"]).default("create_or_update"),
-  importance: z.number().min(1).max(5),
-  confidence: z.number().min(0).max(1),
-  shouldOutput: z.boolean(),
+  importance: z.coerce.number().min(1).max(5).default(3),
+  confidence: z.coerce.number().min(0).max(1).default(0.7),
+  shouldOutput: z.boolean().default(false),
   outputType: z.string().default("summary"),
   outputReason: z.string().default("model_decision"),
   outputPriority: z.enum(["low", "medium", "high"]).default("medium"),
@@ -62,7 +62,7 @@ export class OpenAICompatibleModelProvider {
     const extraTools = (options.tools ?? []).map(toOpenAITool);
     const logModelRequest = options.logModelRequest;
 
-    if (!executeTool || extraTools.length === 0) {
+    if (!executeTool) {
       return this._singleShot(inputEvent, context, { logModelRequest });
     }
 
@@ -89,7 +89,7 @@ export class OpenAICompatibleModelProvider {
       { role: "user", content: buildOpenAIUserContent(inputEvent, context) }
     ];
     const allTools = [...extraTools, ANALYSIS_TOOL_OPENAI];
-    let searchedMemory = hasRelatedMemories(context);
+    let searchedMemory = hasRelatedMemories(context) || !hasTool(allTools, "search_memory");
     const relatedMemories = new Map();
     collectRelatedMemories(relatedMemories, context.relatedMemories ?? []);
 
@@ -106,12 +106,16 @@ export class OpenAICompatibleModelProvider {
       emitModelRequestLog(logModelRequest, "info", "Model request started", requestMetadata);
       let response;
       try {
-        response = await this.client.chat.completions.create({
+        const request: Record<string, unknown> = {
           model: this.model,
           temperature: 0.2,
           messages,
           tools: allTools
-        });
+        };
+        if (extraTools.length === 0) {
+          request.tool_choice = { type: "function", function: { name: ANALYSIS_TOOL_NAME } };
+        }
+        response = await this.client.chat.completions.create(request);
       } catch (error) {
         emitModelRequestLog(logModelRequest, "error", "Model request failed", {
           ...requestMetadata,
@@ -196,7 +200,7 @@ export class OpenAICompatibleModelProvider {
     emitModelRequestLog(options.logModelRequest, "info", "Model request started", requestMetadata);
     let completion;
     try {
-      completion = await this.client.beta.chat.completions.parse({
+      completion = await this.client.chat.completions.create({
         model: this.model,
         temperature: 0.2,
         response_format: zodResponseFormat(AnalysisSchema, "neura_input_analysis"),
@@ -217,8 +221,9 @@ export class OpenAICompatibleModelProvider {
       usage: normalizeOpenAIUsage(completion.usage)
     });
 
-    const parsed = completion.choices[0]?.message?.parsed;
-    if (!parsed) throw new Error("OpenAI-compatible provider returned empty analysis");
+    const content = completion.choices[0]?.message?.content;
+    if (!content) throw new Error("OpenAI-compatible provider returned empty analysis");
+    const parsed = AnalysisSchema.parse(JSON.parse(content));
     return normalizeAnalysis({ provider: this.id, ...parsed });
   }
 }
@@ -255,7 +260,7 @@ export class AnthropicCompatibleModelProvider {
     const extraTools = (options.tools ?? []).map(toAnthropicTool);
     const logModelRequest = options.logModelRequest;
 
-    if (!executeTool || extraTools.length === 0) {
+    if (!executeTool) {
       return this._singleShot(inputEvent, context, { logModelRequest });
     }
 
@@ -281,7 +286,7 @@ export class AnthropicCompatibleModelProvider {
       { role: "user", content: buildAnthropicUserContent(inputEvent, context) }
     ];
     const allTools = [...extraTools, ANALYSIS_TOOL_ANTHROPIC];
-    let searchedMemory = hasRelatedMemories(context);
+    let searchedMemory = hasRelatedMemories(context) || !hasTool(allTools, "search_memory");
     const relatedMemories = new Map();
     collectRelatedMemories(relatedMemories, context.relatedMemories ?? []);
 
@@ -299,14 +304,18 @@ export class AnthropicCompatibleModelProvider {
       emitModelRequestLog(logModelRequest, "info", "Model request started", requestMetadata);
       let response;
       try {
-        response = await this.client.messages.create({
+        const request: Record<string, unknown> = {
           model: this.model,
           max_tokens: 1024,
           temperature: 0.2,
           system: systemPrompt,
           tools: allTools,
           messages
-        });
+        };
+        if (extraTools.length === 0) {
+          request.tool_choice = { type: "tool", name: ANALYSIS_TOOL_NAME };
+        }
+        response = await this.client.messages.create(request);
       } catch (error) {
         emitModelRequestLog(logModelRequest, "error", "Model request failed", {
           ...requestMetadata,
@@ -517,7 +526,7 @@ function toAnthropicTool(tool) {
 function buildPrompt(inputEvent, context) {
   return [
     "请按以下稳定规则分析输入，返回结构化结果。",
-    "如果已有上下文提示为空或不足，请使用 search_memory 搜索与输入最相关的记忆。搜索查询应来自输入主题、实体、项目名、关键决策或用户意图。",
+    "如果 search_memory 工具可用且已有上下文提示为空或不足，请搜索与输入最相关的记忆。搜索查询应来自输入主题、实体、项目名、关键决策或用户意图。",
     "请判断 taskType，并给出摘要、标签、分类(category)、意图(intent)、记忆类型(memoryType)、记忆理由(memoryReason)、重要性和输出决策。",
     "taskType 稳定值：context_capture、memory_capture、summarize_current、memory_query、query、reminder、action_request、event_capture、knowledge_ingest、visual_capture、decision_capture、preference_capture。",
     "总结当前长内容使用 summarize_current；查询历史记录使用 memory_query；明确要求记住/保存时 remembered=true。",
@@ -593,6 +602,10 @@ function safeJsonLength(value) {
 function summarizeToolNames(tools = []) {
   if (!Array.isArray(tools)) return [];
   return tools.map((tool) => tool.function?.name ?? tool.name).filter(Boolean);
+}
+
+function hasTool(tools = [], name) {
+  return summarizeToolNames(tools).includes(name);
 }
 
 function countRelatedMemoryMentions(messages = []) {
