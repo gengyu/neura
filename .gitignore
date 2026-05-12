@@ -2,6 +2,8 @@ data/*.db
 data/*.db-*
 data/*.pid
 logs/*.log
+backups/
+exports/
 node_modules/
 .env
 .env.*

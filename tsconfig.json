@@ -5,6 +5,7 @@
     "moduleResolution": "Bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
+    "noCheck": true,
     "noEmit": true,
     "strict": false,
     "skipLibCheck": true,

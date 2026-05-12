@@ -93,6 +93,7 @@ function buildTitle(inputType: string, content: InputContent): string {
 
 function buildNormalizedText(inputType: string, content: InputContent): string {
   if (typeof content === "string") return content.trim();
+  if (typeof content?.ingest?.modelContent === "string") return content.ingest.modelContent.trim();
   if (inputType === "file" && typeof content?.text === "string") return content.text.trim();
   if (inputType === "image") {
     return [content?.note, content?.text, content?.summaryHint, content?.path].filter(Boolean).join("\n").trim();
@@ -101,12 +102,15 @@ function buildNormalizedText(inputType: string, content: InputContent): string {
 }
 
 function buildSummaryHint(inputType: string, content: InputContent): string {
+  const ingestHint = isStructuredContent(content) && content.ingest?.strategy
+    ? `输入采用 ${content.ingest.strategy} 预算策略；不要假设已完整读取所有内容。`
+    : "";
   if (inputType === "image") return "这是一个图片/截图输入，需要理解视觉内容及用户上下文。";
   if (inputType === "file") {
-    if (!isStructuredContent(content)) return "这是一个文件输入，需要基于文件内容或元信息提炼关键信息。";
-    if (content?.kind === "code") return "这是一个代码文件输入，需要提取目的、模块和关键变化。";
-    if (content?.kind === "binary-document") return "这是一个二进制文档输入，可能需要先形成高层摘要。";
-    return "这是一个文件输入，需要基于文件内容或元信息提炼关键信息。";
+    if (!isStructuredContent(content)) return ["这是一个文件输入，需要基于文件内容或元信息提炼关键信息。", ingestHint].filter(Boolean).join(" ");
+    if (content?.kind === "code") return ["这是一个代码文件输入，需要提取目的、模块和关键变化。", ingestHint].filter(Boolean).join(" ");
+    if (content?.kind === "binary-document") return ["这是一个二进制文档输入，默认只记录元信息，不进行高 token 深度解析。", ingestHint].filter(Boolean).join(" ");
+    return ["这是一个文件输入，需要基于文件内容或元信息提炼关键信息。", ingestHint].filter(Boolean).join(" ");
   }
   if (inputType === "event") return "这是一个外部事件输入，需要判断是否值得沉淀为长期记忆。";
   return "这是一个通用输入，需要判断其长期价值、任务价值和输出必要性。";

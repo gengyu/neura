@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import { z } from "zod";
+import { assertBearerToken, describeAuthRequirement, redactHeaders } from "../../../packages/shared/http-auth.ts";
 import { PLUGIN_STATUSES } from "../../../packages/shared/types.ts";
 
 const WebhookPayloadSchema = z.object({
@@ -21,6 +22,7 @@ export default {
     if (!options?.enabled) return null;
 
     const app = Fastify({ logger: false });
+    const token = options.token ?? process.env.NEURA_WEBHOOK_TOKEN ?? "";
 
     app.get("/health", async () => ({
       ok: true,
@@ -28,6 +30,7 @@ export default {
     }));
 
     async function handleInput(request) {
+      assertBearerToken(request, token, "Webhook");
       const body = WebhookPayloadSchema.parse(request.body ?? {});
       const content = body.imagePath
         ? {
@@ -43,7 +46,7 @@ export default {
         type,
         metadata: {
           remoteAddress: request.ip,
-          headers: request.headers
+          headers: redactHeaders(request.headers)
         }
       });
       return { eventId: event.id, result };
@@ -54,7 +57,11 @@ export default {
 
     await app.listen({ host: options.host, port: options.port });
     runtime.repository.setPluginStatus("webhook-input", PLUGIN_STATUSES.RUNNING);
-    runtime.repository.log("info", "webhook", "Webhook input started", { host: options.host, port: options.port });
+    runtime.repository.log("info", "webhook", "Webhook input started", {
+      host: options.host,
+      port: options.port,
+      auth: describeAuthRequirement({ host: options.host, token })
+    });
 
     return async () => {
       await app.close();

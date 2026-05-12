@@ -35,15 +35,25 @@ Neura 是一个无 UI 优先、长期运行的个人智能体运行时原型。
 如果目标是尽快完整理解整个项目，优先阅读：
 
 - [docs/project-architecture.md](/Users/gengyu/github/neura/docs/project-architecture.md)
+- [docs/product-logic-coverage.md](/Users/gengyu/github/neura/docs/product-logic-coverage.md)
 
 ## 使用
 
 ```bash
+cp .env.example .env
+pnpm install
+pnpm run doctor
 bun run neura -- status
 bun run neura -- input "我想做一个常驻运行的智能体"
+bun run neura -- input-file ./docs/project-architecture.md
+bun run neura -- input-url https://example.com "收藏这个链接"
 bun run neura -- input-image ./data/screenshots/demo.png
 bun run neura -- memory list
 bun run neura -- memory search "智能体"
+bun run neura -- memory edit <memoryId> --summary "新的摘要"
+bun run neura -- memory merge <targetMemoryId> <sourceMemoryId> --yes
+bun run neura -- memory delete <memoryId> --yes
+bun run neura -- memory import ./exports/neura-memories.json --yes
 bun run neura -- agents list
 bun run neura -- agents create "Research Agent" --id research-agent
 bun run neura -- agents use research-agent
@@ -54,6 +64,8 @@ bun run neura -- tools list
 bun run neura -- approvals list
 bun run neura -- schedules add --mode reminder --in 10m "十分钟后提醒我回来看 Neura"
 bun run neura -- schedules list
+bun run neura -- model doctor
+bun run neura -- model test
 bun run neura -- config
 ```
 
@@ -65,6 +77,69 @@ bun run status
 bun run stop
 ```
 
+## 本地生产部署
+
+Neura v1 的推荐形态是本地终端部署：数据默认写入本机 SQLite，不需要云账号。
+
+```bash
+cp .env.example .env
+# 编辑 .env，至少配置 DEEPSEEK_API_KEY 或切换 NEURA_MODEL_PROVIDER=mock 做本地试用
+pnpm install
+pnpm test
+pnpm run doctor
+pnpm run model:doctor
+pnpm start
+```
+
+如果希望在任意终端直接使用 `neura`：
+
+```bash
+pnpm run install:local
+neura doctor
+neura start
+```
+
+长期运行前建议确认：
+
+- `pnpm run doctor` 没有高风险 `WARN`
+- `NEURA_REQUIRE_CONFIRMATION=true`
+- `NEURA_ALLOW_COMMAND_EXECUTION=false`，除非你明确需要 shell 工具
+- Webhook/Admin 默认绑定 `127.0.0.1`；如果改成外部可访问地址，请配置 `NEURA_WEBHOOK_TOKEN` / `NEURA_ADMIN_TOKEN`
+- 数据库和日志目录纳入你自己的本地备份策略
+
+常用数据维护命令：
+
+```bash
+neura backup create
+neura backup list
+neura memory export --format md
+neura memory export --format json
+neura memory import ./exports/neura-memories-default-agent.json --yes
+```
+
+## npm 包发布
+
+发布前先确认包内容和验收测试：
+
+```bash
+pnpm run release:check
+pnpm run pack:npm
+```
+
+正式发布：
+
+```bash
+pnpm run publish:npm
+```
+
+如果后续改成 scoped 包并需要公开发布，可以使用：
+
+```bash
+pnpm run publish:npm:public
+```
+
+npm 包通过 `files` 白名单发布源码和运行所需资源，不会包含 `data/`、`logs/`、`backups/`、`exports/` 或 `.env`。
+
 ## 数据
 
 本地数据写入：
@@ -72,6 +147,25 @@ bun run stop
 - `data/neura.db`
 - `logs/neura.log`
 - `logs/neura-output.log`
+
+## 大输入与成本控制
+
+Neura 不会默认把大文件、大段文本或大文件夹内容一次性塞进模型上下文。输入会先经过本地预算层：
+
+- 长文本/大文件会生成前后片段预览和本地分块索引。
+- 超过 `NEURA_MAX_FILE_READ_BYTES` 的文件只读取预算内字节。
+- PDF、Office 等二进制文档默认只记录元信息，不做高 token 深度解析。
+- URL 默认只记录链接和说明，不自动抓取网页正文。
+- 文件夹监听按文件逐个处理，单个文件仍受同一预算限制。
+
+可通过 `.env` 调整：
+
+```bash
+NEURA_MAX_MODEL_INPUT_CHARS=24000
+NEURA_MAX_FILE_READ_BYTES=512000
+NEURA_INGEST_CHUNK_CHARS=6000
+NEURA_INGEST_MAX_CHUNKS=12
+```
 
 ## 说明
 
@@ -173,6 +267,12 @@ open http://127.0.0.1:8790
 ```
 
 管理界面由 `admin-ui-output` 插件提供，可以查看状态、切换/创建 Agent、提交输入、启停插件、搜索记忆、处理审批、创建定时任务，并查看输入、任务、输出、日志和工具调用详情。
+
+如果配置了 `NEURA_ADMIN_TOKEN`，首次打开可以使用：
+
+```bash
+open "http://127.0.0.1:8790?token=$NEURA_ADMIN_TOKEN"
+```
 
 ## 文件夹监听
 

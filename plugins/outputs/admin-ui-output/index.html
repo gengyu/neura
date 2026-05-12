@@ -342,6 +342,11 @@
         active: "active",
         paused: "paused"
       };
+      const urlToken = new URLSearchParams(location.search).get("token");
+      if (urlToken) {
+        localStorage.setItem("neura-admin-token", urlToken);
+        history.replaceState(null, "", location.pathname);
+      }
       let current = localStorage.getItem("neura-admin-tab") || "dashboard";
       let lastStatus = null;
       let lastAgents = { agents: [], activeAgent: null };
@@ -377,8 +382,12 @@
       });
 
       async function api(path, options) {
+        const token = localStorage.getItem("neura-admin-token");
         const response = await fetch(path, {
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+          },
           ...options
         });
         if (!response.ok) throw new Error(await response.text());
@@ -604,12 +613,40 @@
 
         async function load(query = "") {
           const rows = await api(`/api/memories${query ? `?query=${encodeURIComponent(query)}` : ""}`);
-          document.querySelector("#memoryTable").innerHTML = renderTable(["summary", "tags", "sourceType", "sourceId", "importance", "confidence", "vectorScore", "updatedAt"], rows.map((row) => ({
+          document.querySelector("#memoryTable").innerHTML = renderTable(["summary", "tags", "relevance", "reasons", "sourceType", "sourceId", "importance", "confidence", "updatedAt", "action"], rows.map((row) => ({
             ...row,
             tags: row.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join(""),
-            vectorScore: row.vectorScore === undefined ? "" : Number(row.vectorScore).toFixed(3)
+            relevance: row.score === undefined && row.vectorScore === undefined ? "" : Number(row.score ?? row.vectorScore).toFixed(3),
+            reasons: Array.isArray(row.matchReasons) ? row.matchReasons.map((reason) => `<span class="tag">${escapeHtml(reason)}</span>`).join("") : "",
+            action: `<button class="btn" data-memory-edit="${escapeHtml(row.id)}">编辑</button> <button class="btn danger" data-memory-delete="${escapeHtml(row.id)}">删除</button>`
           })));
           bindDetailButtons(rows);
+          view.querySelectorAll("button[data-memory-edit]").forEach((button) => {
+            button.addEventListener("click", async () => {
+              const row = rows.find((item) => item.id === button.dataset.memoryEdit);
+              if (!row) return;
+              const summary = prompt("编辑记忆摘要", row.summary ?? "");
+              if (summary === null) return;
+              const tags = prompt("编辑标签，逗号分隔", (row.tags ?? []).join(", "));
+              if (tags === null) return;
+              await runAction(async () => api(`/api/memories/${button.dataset.memoryEdit}`, {
+                method: "POST",
+                body: JSON.stringify({
+                  summary,
+                  tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean)
+                })
+              }), "记忆已更新");
+              await load(input.value.trim());
+            });
+          });
+          view.querySelectorAll("button[data-memory-delete]").forEach((button) => {
+            button.addEventListener("click", async () => {
+              if (!confirm("确认删除这条记忆？此操作不可撤销。")) return;
+              await runAction(async () => api(`/api/memories/${button.dataset.memoryDelete}`, { method: "DELETE" }), "记忆已删除");
+              await refreshChrome();
+              await load(input.value.trim());
+            });
+          });
         }
       }
 

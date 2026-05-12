@@ -362,6 +362,76 @@ export class Repository {
     return memory;
   }
 
+  editMemory(id, { summary = undefined, content = undefined, tags = undefined, importance = undefined, confidence = undefined } = {}) {
+    const existing = this.getMemory(id);
+    if (!existing) return null;
+    const next = {
+      summary: summary === undefined ? existing.summary : String(summary).trim(),
+      content: content === undefined ? existing.content : String(content).trim(),
+      tags: tags === undefined ? existing.tags : normalizeTags(tags),
+      importance: importance === undefined ? existing.importance : clampNumber(importance, 1, 5),
+      confidence: confidence === undefined ? existing.confidence : clampNumber(confidence, 0, 1),
+      updatedAt: nowIso()
+    };
+    if (!next.summary) next.summary = existing.summary;
+    if (!next.content) next.content = existing.content;
+    this.store.run(`
+      UPDATE memories
+      SET summary = ${this.store.value(next.summary)},
+          content = ${this.store.value(next.content)},
+          tags = ${this.store.json(next.tags)},
+          importance = ${next.importance},
+          confidence = ${next.confidence},
+          updated_at = ${this.store.value(next.updatedAt)}
+      WHERE id = ${this.store.value(id)} AND agent_id = ${this.store.value(this.getActiveAgentId())};
+    `);
+    this.log("info", "memory", "Memory edited", { memoryId: id });
+    return this.getMemory(id);
+  }
+
+  deleteMemory(id) {
+    const existing = this.getMemory(id);
+    if (!existing) return null;
+    this.store.run(`
+      DELETE FROM memories
+      WHERE id = ${this.store.value(id)} AND agent_id = ${this.store.value(this.getActiveAgentId())};
+    `);
+    this.log("info", "memory", "Memory deleted", { memoryId: id, summary: existing.summary });
+    return existing;
+  }
+
+  mergeMemories(targetId, sourceIds = []) {
+    const target = this.getMemory(targetId);
+    if (!target) return null;
+    const sources = sourceIds.map((id) => this.getMemory(id)).filter(Boolean);
+    if (sources.length === 0) return target;
+
+    const mergedContent = mergeContent(target.content, sources.map((memory) => memory.content).join("\n\n"));
+    const mergedSummary = target.summary;
+    const mergedTags = mergeTags(target.tags, sources.flatMap((memory) => memory.tags ?? []));
+    const mergedImportance = Math.max(Number(target.importance ?? 0), ...sources.map((memory) => Number(memory.importance ?? 0)));
+    const mergedConfidence = Math.max(Number(target.confidence ?? 0), ...sources.map((memory) => Number(memory.confidence ?? 0)));
+    const updated = this.editMemory(targetId, {
+      summary: mergedSummary,
+      content: mergedContent,
+      tags: mergedTags,
+      importance: mergedImportance,
+      confidence: mergedConfidence
+    });
+
+    for (const source of sources) {
+      this.store.run(`
+        DELETE FROM memories
+        WHERE id = ${this.store.value(source.id)} AND agent_id = ${this.store.value(this.getActiveAgentId())};
+      `);
+    }
+    this.log("info", "memory", "Memories merged", {
+      targetId,
+      sourceIds: sources.map((memory) => memory.id)
+    });
+    return { memory: updated, mergedIds: sources.map((memory) => memory.id) };
+  }
+
   getMemory(id) {
     const rows = this.store.query(`
       SELECT id, content, summary, tags, source_input_id AS sourceInputId, source_type AS sourceType, source_id AS sourceId, importance, confidence, created_at AS createdAt, updated_at AS updatedAt
@@ -768,6 +838,19 @@ function parseJson(value) {
 
 function mergeTags(existing, next) {
   return [...new Set([...parseJsonArray(existing), ...(next ?? [])])].slice(0, 12);
+}
+
+function normalizeTags(tags) {
+  return [...new Set((Array.isArray(tags) ? tags : String(tags ?? "").split(","))
+    .map((tag) => String(tag).trim())
+    .filter(Boolean)
+  )].slice(0, 12);
+}
+
+function clampNumber(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return min;
+  return Math.max(min, Math.min(max, number));
 }
 
 function mergeContent(existing, next) {

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { assertBearerToken, describeAuthRequirement } from "../../../packages/shared/http-auth.ts";
 import { APPROVAL_STATUSES, PLUGIN_STATUSES, SCHEDULE_STATUSES } from "../../../packages/shared/types.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -37,6 +38,14 @@ const ScheduleSchema = z.object({
   intervalMs: z.number().int().positive().nullable().optional()
 });
 
+const MemoryEditSchema = z.object({
+  summary: z.string().trim().min(1).optional(),
+  content: z.string().trim().min(1).optional(),
+  tags: z.array(z.string()).optional(),
+  importance: z.coerce.number().min(1).max(5).optional(),
+  confidence: z.coerce.number().min(0).max(1).optional()
+});
+
 export default {
   id: "admin-ui-output",
   name: "Admin UI Output",
@@ -54,6 +63,12 @@ export default {
 
     const app = Fastify({ logger: false });
     const indexHtml = readFileSync(resolve(__dirname, "index.html"), "utf8");
+    const token = options.token ?? process.env.NEURA_ADMIN_TOKEN ?? "";
+
+    app.addHook("preHandler", async (request) => {
+      if (request.url === "/" || request.url === "/api/config" || request.url === "/api/status") return;
+      assertBearerToken(request, token, "Admin UI");
+    });
 
     app.get("/", async (_request, reply) => {
       reply.type("text/html; charset=utf-8");
@@ -111,6 +126,25 @@ export default {
       const query = request.query?.query;
       return query ? await runtime.repository.searchMemories(query) : runtime.repository.listMemories(50);
     });
+    app.post("/api/memories/:id", async (request) => {
+      const body = MemoryEditSchema.parse(request.body ?? {});
+      const memory = runtime.repository.editMemory(request.params.id, body);
+      if (!memory) {
+        const error = new Error(`Memory not found: ${request.params.id}`);
+        error.statusCode = 404;
+        throw error;
+      }
+      return memory;
+    });
+    app.delete("/api/memories/:id", async (request) => {
+      const deleted = runtime.repository.deleteMemory(request.params.id);
+      if (!deleted) {
+        const error = new Error(`Memory not found: ${request.params.id}`);
+        error.statusCode = 404;
+        throw error;
+      }
+      return { ok: true, deleted };
+    });
 
     app.get("/api/inputs", async () => runtime.repository.listInputEvents(50));
     app.get("/api/tasks", async () => runtime.repository.listTasks(50));
@@ -150,7 +184,8 @@ export default {
     runtime.repository.setPluginStatus(this.id, PLUGIN_STATUSES.RUNNING);
     runtime.repository.log("info", "admin-ui", "Admin UI started", {
       host: options.host,
-      port: options.port
+      port: options.port,
+      auth: describeAuthRequirement({ host: options.host, token })
     });
 
     return async () => {

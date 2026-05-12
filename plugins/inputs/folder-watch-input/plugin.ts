@@ -1,6 +1,7 @@
 import chokidar from "chokidar";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { extname, resolve } from "node:path";
+import { buildFileInput } from "../../../packages/core/ingest-budget.ts";
 import { PLUGIN_STATUSES } from "../../../packages/shared/types.ts";
 
 export default {
@@ -32,7 +33,7 @@ export default {
       if (!extensions.has(extension)) return;
       try {
         const imageInput = toImageInput(filePath, extension);
-        const content = imageInput ?? toFileInput(filePath, extension);
+        const content = imageInput ?? buildFileInput(filePath, extension, runtime.config.runtime.ingest);
         await runtime.input(content, {
           pluginId: "folder-watch-input",
           type: imageInput ? "image" : "file",
@@ -63,14 +64,6 @@ export default {
   }
 };
 
-function safeJson(raw) {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw;
-  }
-}
-
 function toImageInput(filePath, extension) {
   const mimeType = imageMimeType(extension);
   if (!mimeType) return null;
@@ -81,36 +74,9 @@ function toImageInput(filePath, extension) {
   };
 }
 
-function toFileInput(filePath, extension) {
-  if (extension === ".pdf") {
-    return {
-      path: filePath,
-      extension,
-      kind: "binary-document",
-      text: null,
-      summaryHint: "PDF file detected from inbox"
-    };
-  }
-
-  const raw = readFileSync(filePath, "utf8");
-  return {
-    path: filePath,
-    extension,
-    kind: detectTextKind(extension),
-    text: extension === ".json" ? JSON.stringify(safeJson(raw), null, 2) : raw
-  };
-}
-
 function imageMimeType(extension) {
   if (extension === ".png") return "image/png";
   if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
   if (extension === ".webp") return "image/webp";
   return null;
-}
-
-function detectTextKind(extension) {
-  if (extension === ".md") return "markdown";
-  if (extension === ".json") return "json";
-  if ([".js", ".ts", ".jsx", ".tsx"].includes(extension)) return "code";
-  return "text";
 }

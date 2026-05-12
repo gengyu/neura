@@ -14,6 +14,7 @@ import { synthesizeResult } from "./result-synthesizer.ts";
 import { ScheduleManager } from "./schedule-manager.ts";
 import { buildOutputDecision } from "./output-decision.ts";
 import { buildOutputRoute } from "./output-routing.ts";
+import { prepareInputForIngest } from "./ingest-budget.ts";
 import type { GenericRecord, InputEvent, ModelProvider, OutputEvent, OutputPlugin, RuntimeBootstrapRepository } from "./types.ts";
 
 type PluginOverride = { id: string; enabled?: boolean; config?: Record<string, unknown> };
@@ -113,10 +114,15 @@ export async function createRuntime(): Promise<RuntimeShape> {
       if (!options.internal && !repository.isPluginEnabled(pluginId)) {
         throw new Error(`Input plugin is disabled: ${pluginId}`);
       }
+      const type = String(options.type ?? "text");
+      const preparedContent = prepareInputForIngest(content, {
+        type,
+        ingest: config.runtime.ingest
+      });
       const event = repository.createInputEvent({
         pluginId,
-        type: options.type ?? "text",
-        content,
+        type,
+        content: preparedContent,
         metadata: options.metadata ?? {}
       });
       return { event, result: await agentLoop.process(event) };

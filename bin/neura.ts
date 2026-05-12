@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { extname, resolve } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRuntime } from "../packages/core/runtime.ts";
+import { isLocalHost } from "../packages/shared/http-auth.ts";
 import { APPROVAL_STATUSES, RUNTIME_STATUSES, SCHEDULE_STATUSES, SOURCE_TYPES } from "../packages/shared/types.ts";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -28,6 +29,8 @@ program.command("restart").description("重启 Neura Runtime").action(async () =
 program.command("status").description("查看运行状态").action(status);
 program.command("input").description("发送一条 CLI 输入").argument("<text...>", "输入内容").action(input);
 program.command("input-image").description("发送一张图片输入").argument("<path>", "图片路径").argument("[note...]", "附加说明").action(inputImage);
+program.command("input-file").description("发送一个本地文件输入").argument("<path>", "文件路径").argument("[note...]", "附加说明").action(inputFile);
+program.command("input-url").description("记录一个链接输入，不默认抓取网页正文").argument("<url>", "URL").argument("[note...]", "附加说明").action(inputUrl);
 
 const inputs = program.command("inputs").description("输入事件");
 inputs.command("list").description("列出最近输入").action(listInputs);
@@ -68,7 +71,49 @@ memory.command("tag")
   .option("--add <tags...>", "追加这些标签")
   .option("--remove <tags...>", "移除这些标签")
   .action(updateMemoryTags);
+memory.command("edit")
+  .description("编辑一条记忆")
+  .argument("<memoryId>", "记忆 ID")
+  .option("--summary <text>", "新的摘要")
+  .option("--content <text>", "新的内容")
+  .option("--tags <tags...>", "替换标签")
+  .option("--importance <number>", "重要性 1-5")
+  .option("--confidence <number>", "置信度 0-1")
+  .action(editMemory);
+memory.command("delete")
+  .description("删除一条记忆")
+  .argument("<memoryId>", "记忆 ID")
+  .option("--yes", "确认删除")
+  .action(deleteMemory);
+memory.command("merge")
+  .description("把多条源记忆合并到目标记忆，并删除源记忆")
+  .argument("<targetId>", "目标记忆 ID")
+  .argument("<sourceIds...>", "要合并进目标的源记忆 ID")
+  .option("--yes", "确认合并")
+  .action(mergeMemories);
+memory.command("export")
+  .description("导出当前 Agent 的记忆")
+  .option("--format <format>", "md 或 json", "md")
+  .option("-o, --out <path>", "输出文件路径")
+  .option("-n, --limit <number>", "导出数量", "1000")
+  .action(exportMemories);
+memory.command("import")
+  .description("从 JSON 文件导入记忆")
+  .argument("<path>", "由 memory export --format json 生成的文件")
+  .option("--yes", "确认导入")
+  .action(importMemories);
 program.command("review").description("整理最近记录或某个主题").argument("[query...]", "可选主题").action(review);
+
+const model = program.command("model").description("模型配置与连通性");
+model.command("doctor").description("检查模型配置，不发起真实模型请求").action(modelDoctor);
+model.command("test")
+  .description("发起一次最小模型请求，验证真实连通性")
+  .argument("[prompt...]", "测试提示词")
+  .action(modelTest);
+
+const backup = program.command("backup").description("本地备份");
+backup.command("create").description("创建 SQLite 数据库备份").option("-o, --out <dir>", "备份目录", "backups").action(createBackup);
+backup.command("list").description("列出本地备份").option("-d, --dir <dir>", "备份目录", "backups").action(listBackups);
 
 const agents = program.command("agents").description("Agent 管理");
 agents.command("list").description("列出 Agent").action(listAgents);
@@ -106,6 +151,7 @@ schedules.command("remove").description("删除定时任务").argument("<schedul
 schedules.command("run-due").description("立即处理到期定时任务").action(runDueSchedules);
 
 program.command("config").description("查看配置").action(showConfig);
+program.command("doctor").description("检查本地部署是否可用").action(doctor);
 program.command("logs").description("查看最近日志").action(logs);
 
 await program.parseAsync(process.argv);
@@ -227,6 +273,7 @@ async function input(textParts) {
       console.log(`  - ${action}`);
     }
   }
+  printWarnings(result.warnings);
   console.log(`标签: ${result.tags.join(", ")}`);
   console.log(`写入记忆: ${result.remembered ? "是" : "否"}`);
   console.log(`记忆动作: ${formatMemoryAction(result.memoryAction)}`);
@@ -256,6 +303,55 @@ async function inputImage(path, noteParts = []) {
   console.log("已处理图片输入");
   console.log(`输入 ID: ${event.id}`);
   console.log(`摘要: ${result.summary}`);
+  console.log(`标签: ${result.tags.join(", ")}`);
+  printWarnings(result.warnings);
+  console.log(`写入记忆: ${result.remembered ? "是" : "否"}`);
+}
+
+async function inputFile(path, noteParts = []) {
+  const runtime = await createRuntime();
+  const absolutePath = resolve(path);
+  const extension = extname(absolutePath).toLowerCase();
+  const { buildFileInput } = await import("../packages/core/ingest-budget.ts");
+  const content = buildFileInput(absolutePath, extension, runtime.config.runtime.ingest);
+  if (noteParts.length > 0) {
+    content.note = noteParts.join(" ").trim();
+  }
+  const { event, result } = await runtime.input(content, {
+    pluginId: "cli-input",
+    type: "file",
+    metadata: { command: "neura input-file", path: absolutePath }
+  });
+  console.log("已处理文件输入");
+  console.log(`输入 ID: ${event.id}`);
+  console.log(`任务类型: ${result.taskType}`);
+  console.log(`摘要: ${result.summary}`);
+  printWarnings(result.warnings);
+  console.log(`标签: ${result.tags.join(", ")}`);
+  console.log(`写入记忆: ${result.remembered ? "是" : "否"}`);
+  console.log(`记忆动作: ${formatMemoryAction(result.memoryAction)}`);
+  if (result.memoryId) console.log(`记忆 ID: ${result.memoryId}`);
+}
+
+async function inputUrl(url, noteParts = []) {
+  const runtime = await createRuntime();
+  const { event, result } = await runtime.input(
+    {
+      url,
+      note: noteParts.join(" ").trim() || null,
+      summaryHint: "URL input is recorded as a link by default. Neura does not fetch page content unless an explicit network tool/action is approved."
+    },
+    {
+      pluginId: "cli-input",
+      type: "url",
+      metadata: { command: "neura input-url", url }
+    }
+  );
+  console.log("已处理链接输入");
+  console.log(`输入 ID: ${event.id}`);
+  console.log(`任务类型: ${result.taskType}`);
+  console.log(`摘要: ${result.summary}`);
+  printWarnings(result.warnings);
   console.log(`标签: ${result.tags.join(", ")}`);
   console.log(`写入记忆: ${result.remembered ? "是" : "否"}`);
 }
@@ -426,6 +522,12 @@ async function searchMemories(queryParts) {
     console.log(`${memory.id}`);
     console.log(`  摘要: ${memory.summary}`);
     console.log(`  标签: ${memory.tags.join(", ")}`);
+    if (memory.score !== undefined || memory.vectorScore !== undefined) {
+      console.log(`  相关性: ${formatScore(memory.score ?? memory.vectorScore)}`);
+    }
+    if (Array.isArray(memory.matchReasons) && memory.matchReasons.length > 0) {
+      console.log(`  命中原因: ${memory.matchReasons.join(", ")}`);
+    }
     console.log(`  来源: ${memory.sourceType ?? SOURCE_TYPES.INPUT_EVENT}${memory.sourceId ? ` (${memory.sourceId})` : ""}`);
     console.log(`  内容: ${memory.content}`);
   }
@@ -457,12 +559,166 @@ async function updateMemoryTags(memoryId, options = {}) {
   console.log(`标签: ${updated.tags.join(", ") || "无"}`);
 }
 
+async function editMemory(memoryId, options = {}) {
+  const runtime = await createRuntime();
+  const payload = {};
+  if (options.summary !== undefined) payload.summary = options.summary;
+  if (options.content !== undefined) payload.content = options.content;
+  if (Array.isArray(options.tags)) payload.tags = options.tags;
+  if (options.importance !== undefined) payload.importance = options.importance;
+  if (options.confidence !== undefined) payload.confidence = options.confidence;
+  if (Object.keys(payload).length === 0) {
+    const memory = runtime.repository.getMemory(memoryId);
+    if (!memory) return console.log(`没有找到记忆: ${memoryId}`);
+    console.log(`${memory.id}`);
+    console.log(`摘要: ${memory.summary}`);
+    console.log(`标签: ${memory.tags.join(", ") || "无"}`);
+    console.log(`重要性: ${memory.importance}`);
+    console.log(`置信度: ${memory.confidence}`);
+    console.log(memory.content);
+    return;
+  }
+  const updated = runtime.repository.editMemory(memoryId, payload);
+  if (!updated) return console.log(`没有找到记忆: ${memoryId}`);
+  console.log(`已编辑记忆: ${updated.id}`);
+  console.log(`摘要: ${updated.summary}`);
+  console.log(`标签: ${updated.tags.join(", ") || "无"}`);
+}
+
+async function deleteMemory(memoryId, options = {}) {
+  if (!options.yes) {
+    console.log("这是破坏性操作：会永久删除这条记忆。");
+    console.log(`如果确认，请重新运行：bun run neura -- memory delete ${memoryId} --yes`);
+    return;
+  }
+  const runtime = await createRuntime();
+  const deleted = runtime.repository.deleteMemory(memoryId);
+  if (!deleted) return console.log(`没有找到记忆: ${memoryId}`);
+  console.log(`已删除记忆: ${deleted.id}`);
+  console.log(`摘要: ${deleted.summary}`);
+}
+
+async function mergeMemories(targetId, sourceIds, options = {}) {
+  if (!Array.isArray(sourceIds) || sourceIds.length === 0) {
+    throw new Error("请提供至少一个源记忆 ID");
+  }
+  if (!options.yes) {
+    console.log("这是破坏性操作：会把源记忆合并到目标记忆，并删除源记忆。");
+    console.log(`如果确认，请重新运行：bun run neura -- memory merge ${targetId} ${sourceIds.join(" ")} --yes`);
+    return;
+  }
+  const runtime = await createRuntime();
+  const result = runtime.repository.mergeMemories(targetId, sourceIds);
+  if (!result) return console.log(`没有找到目标记忆: ${targetId}`);
+  console.log(`已合并记忆到: ${result.memory.id}`);
+  console.log(`已删除源记忆: ${result.mergedIds.join(", ") || "无"}`);
+  console.log(`摘要: ${result.memory.summary}`);
+}
+
+async function exportMemories(options = {}) {
+  const runtime = await createRuntime();
+  const format = String(options.format ?? "md").toLowerCase();
+  if (!["md", "json"].includes(format)) {
+    throw new Error(`Unsupported memory export format: ${format}`);
+  }
+  const limit = Number(options.limit ?? 1000);
+  const memories = runtime.repository.listMemories(limit);
+  const agentId = runtime.repository.getActiveAgentId();
+  const outputPath = resolve(options.out ?? `exports/neura-memories-${agentId}-${timestampForFile()}.${format}`);
+  mkdirSync(resolve(outputPath, ".."), { recursive: true });
+
+  const content = format === "json"
+    ? JSON.stringify({ exportedAt: new Date().toISOString(), agentId, memories }, null, 2)
+    : renderMemoriesMarkdown({ agentId, memories });
+  writeFileSync(outputPath, content);
+  console.log(`已导出记忆: ${outputPath}`);
+  console.log(`数量: ${memories.length}`);
+}
+
+async function importMemories(path, options = {}) {
+  if (!options.yes) {
+    console.log("这是写入操作：会把 JSON 文件中的记忆导入当前 Agent。");
+    console.log(`如果确认，请重新运行：bun run neura -- memory import ${path} --yes`);
+    return;
+  }
+  const runtime = await createRuntime();
+  const absolutePath = resolve(path);
+  const payload = JSON.parse(readFileSync(absolutePath, "utf8"));
+  const imported = Array.isArray(payload) ? payload : payload.memories;
+  if (!Array.isArray(imported)) {
+    throw new Error("Unsupported memory import file: expected an array or { memories: [] }");
+  }
+
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+  for (const item of imported) {
+    const summary = String(item.summary ?? "").trim();
+    const content = String(item.content ?? summary).trim();
+    if (!summary || !content) {
+      skipped += 1;
+      continue;
+    }
+    const tags = Array.isArray(item.tags) ? item.tags : [];
+    const payload = {
+      content,
+      summary,
+      tags,
+      sourceInputId: item.sourceInputId ?? null,
+      sourceType: item.sourceType ?? SOURCE_TYPES.MANUAL,
+      sourceId: item.sourceId ?? absolutePath,
+      importance: clampCliNumber(item.importance, 1, 5, 3),
+      confidence: clampCliNumber(item.confidence, 0, 1, 0.8)
+    };
+    const similar = await runtime.repository.findSimilarMemory(payload, 0.86);
+    if (similar) {
+      runtime.repository.updateMemory(similar.memory.id, payload);
+      updated += 1;
+    } else {
+      runtime.repository.createMemory(payload);
+      created += 1;
+    }
+  }
+
+  console.log(`已导入记忆: ${absolutePath}`);
+  console.log(`新增: ${created}`);
+  console.log(`更新: ${updated}`);
+  console.log(`跳过: ${skipped}`);
+}
+
 async function review(queryParts = []) {
   const runtime = await createRuntime();
   const query = queryParts.join(" ").trim();
   const result = await runtime.review(query);
   console.log(query ? `整理主题: ${query}` : "整理最近记录");
   console.log(result.summary);
+}
+
+async function modelDoctor() {
+  const runtime = await createRuntime();
+  const report = buildModelReport(runtime);
+  for (const item of report) {
+    console.log(`${item.ok ? "OK" : "WARN"} ${item.label}: ${item.detail}`);
+  }
+}
+
+async function modelTest(promptParts = []) {
+  const runtime = await createRuntime();
+  const report = buildModelReport(runtime);
+  const blocking = report.filter((item) => !item.ok && item.blocking);
+  if (blocking.length > 0) {
+    for (const item of blocking) {
+      console.log(`WARN ${item.label}: ${item.detail}`);
+    }
+    throw new Error("模型配置未就绪，无法发起测试请求");
+  }
+
+  const prompt = promptParts.join(" ").trim() || "请用一句话回复：Neura 模型连通性测试成功。";
+  const startedAt = Date.now();
+  const result = await runtime.tools.callModel(prompt, "你是 Neura 的模型连通性测试器，只需简短回答。");
+  console.log("模型请求成功");
+  console.log(`耗时: ${Date.now() - startedAt}ms`);
+  console.log(`回复: ${result?.content ?? JSON.stringify(result)}`);
 }
 
 async function listAgents() {
@@ -628,9 +884,172 @@ async function showConfig() {
   console.log("Webhook:");
   console.log(`  enabled: ${runtime.config.runtime.webhook.enabled}`);
   console.log(`  url: http://${runtime.config.runtime.webhook.host}:${runtime.config.runtime.webhook.port}/input`);
+  console.log(`  token: ${runtime.config.runtime.webhook.token ? "已配置" : "未配置"}`);
+  console.log("管理界面:");
+  console.log(`  enabled: ${runtime.config.runtime.adminUi.enabled}`);
+  console.log(`  url: http://${runtime.config.runtime.adminUi.host}:${runtime.config.runtime.adminUi.port}`);
+  console.log(`  token: ${runtime.config.runtime.adminUi.token ? "已配置" : "未配置"}`);
   console.log("文件夹监听:");
   console.log(`  enabled: ${runtime.config.runtime.folderWatch.enabled}`);
   console.log(`  path: ${runtime.config.runtime.folderWatch.path}`);
+}
+
+async function doctor() {
+  const runtime = await createRuntime();
+  const state = runtime.status();
+  const checks = [];
+  const model = state.model ?? {};
+  const webhook = runtime.config.runtime.webhook;
+  const adminUi = runtime.config.runtime.adminUi;
+  const policy = runtime.config.policy;
+
+  checks.push({
+    ok: true,
+    label: "SQLite 数据库",
+    detail: runtime.config.storage.databasePath
+  });
+  checks.push({
+    ok: model.apiKeyConfigured === true,
+    label: "模型 API key",
+    detail: model.apiKeyConfigured ? `${model.provider}/${model.model}` : `请配置 ${model.apiKeyEnv}`
+  });
+  for (const item of buildModelReport(runtime)) {
+    if (item.blocking) continue;
+    checks.push({ ok: item.ok, label: `模型${item.label}`, detail: item.detail });
+  }
+  checks.push({
+    ok: !webhook.enabled || isLocalHost(webhook.host) || Boolean(webhook.token),
+    label: "Webhook 入口安全",
+    detail: webhook.enabled
+      ? `${webhook.host}:${webhook.port}${webhook.token ? " token 已配置" : " token 未配置"}`
+      : "已关闭"
+  });
+  checks.push({
+    ok: !adminUi.enabled || isLocalHost(adminUi.host) || Boolean(adminUi.token),
+    label: "管理界面安全",
+    detail: adminUi.enabled
+      ? `${adminUi.host}:${adminUi.port}${adminUi.token ? " token 已配置" : " token 未配置"}`
+      : "已关闭"
+  });
+  checks.push({
+    ok: policy.requireConfirmation === true,
+    label: "高风险动作审批",
+    detail: policy.requireConfirmation ? "已开启" : "已关闭"
+  });
+  checks.push({
+    ok: policy.allowCommandExecution !== true,
+    label: "Shell 命令默认权限",
+    detail: policy.allowCommandExecution ? "已允许，请谨慎用于生产" : "已禁用"
+  });
+
+  let failed = 0;
+  for (const check of checks) {
+    if (!check.ok) failed += 1;
+    console.log(`${check.ok ? "OK" : "WARN"} ${check.label}: ${check.detail}`);
+  }
+  console.log("");
+  console.log(`输入事件: ${state.counts.inputEvents}`);
+  console.log(`记忆: ${state.counts.memories}`);
+  console.log(`待审批: ${state.counts.pendingApprovals}`);
+  console.log(`激活中的定时任务: ${state.counts.activeSchedules}`);
+  if (failed > 0) {
+    console.log("");
+    console.log("建议先处理 WARN 项再长期运行。");
+  } else {
+    console.log("");
+    console.log("本地部署检查通过，可以启动长期运行。");
+  }
+}
+
+function buildModelReport(runtime) {
+  const config = runtime.config.model;
+  const provider = process.env.NEURA_MODEL_PROVIDER || config.provider;
+  const supportedProviders = new Set(["mock", "deepseek", "openai-compatible", "anthropic-compatible", "deepseek-anthropic"]);
+  const apiKeyEnv = config.apiKeyEnv;
+  const apiKeyConfigured = provider === "mock" || Boolean(process.env[apiKeyEnv]);
+  const isOpenAIStyle = provider === "deepseek" || provider === "openai-compatible";
+  const isAnthropicStyle = provider === "anthropic-compatible" || provider === "deepseek-anthropic";
+  return [
+    {
+      ok: supportedProviders.has(provider),
+      blocking: true,
+      label: "Provider",
+      detail: supportedProviders.has(provider) ? provider : `${provider} 不受支持`
+    },
+    {
+      ok: Boolean(config.model),
+      blocking: true,
+      label: "Model",
+      detail: config.model || "未配置"
+    },
+    {
+      ok: apiKeyConfigured,
+      blocking: true,
+      label: "API key",
+      detail: apiKeyConfigured ? (provider === "mock" ? "mock 不需要 API key" : `${apiKeyEnv} 已配置`) : `请配置 ${apiKeyEnv}`
+    },
+    {
+      ok: provider === "mock" || Boolean(isOpenAIStyle ? config.baseUrl : config.anthropicBaseUrl),
+      blocking: true,
+      label: "Base URL",
+      detail: provider === "mock" ? "mock provider" : String(isOpenAIStyle ? config.baseUrl : config.anthropicBaseUrl)
+    },
+    {
+      ok: Number(config.timeoutMs) >= 5000,
+      blocking: false,
+      label: "Timeout",
+      detail: `${config.timeoutMs}ms`
+    },
+    {
+      ok: provider === "mock" || config.apiKeyEnv !== "OPENAI_API_KEY" || !/deepseek/i.test(config.baseUrl ?? ""),
+      blocking: false,
+      label: "Key/BaseURL 匹配",
+      detail: "检查 provider、baseUrl、apiKeyEnv 是否明显错配"
+    }
+  ];
+}
+
+async function createBackup(options = {}) {
+  const runtime = await createRuntime();
+  const backupDir = resolve(options.out ?? "backups");
+  mkdirSync(backupDir, { recursive: true });
+  runtime.repository.store.checkpoint();
+
+  const databasePath = runtime.repository.store.databasePath;
+  const backupName = `neura-${timestampForFile()}.db`;
+  const backupPath = join(backupDir, backupName);
+  copyFileSync(databasePath, backupPath);
+
+  const metadata = {
+    createdAt: new Date().toISOString(),
+    source: databasePath,
+    backup: backupPath,
+    agentId: runtime.repository.getActiveAgentId(),
+    counts: runtime.status().counts
+  };
+  writeFileSync(`${backupPath}.json`, JSON.stringify(metadata, null, 2));
+  console.log(`已创建备份: ${backupPath}`);
+  console.log(`元数据: ${backupPath}.json`);
+}
+
+async function listBackups(options = {}) {
+  const backupDir = resolve(options.dir ?? "backups");
+  if (!existsSync(backupDir)) return console.log("还没有备份。");
+  const backups = readdirSync(backupDir)
+    .filter((file) => file.endsWith(".db"))
+    .map((file) => {
+      const path = join(backupDir, file);
+      const stat = statSync(path);
+      return { file, path, size: stat.size, mtime: stat.mtime };
+    })
+    .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+  if (backups.length === 0) return console.log("还没有备份。");
+  for (const item of backups) {
+    console.log(`${item.file}`);
+    console.log(`  路径: ${item.path}`);
+    console.log(`  大小: ${formatBytes(item.size)}`);
+    console.log(`  时间: ${item.mtime.toISOString()}`);
+  }
 }
 
 function formatMemoryAction(action) {
@@ -676,4 +1095,59 @@ function formatDuration(value) {
 function truncateLine(value, maxLength) {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function renderMemoriesMarkdown({ agentId, memories }) {
+  const lines = [
+    `# Neura Memories`,
+    "",
+    `- Agent: ${agentId}`,
+    `- Exported: ${new Date().toISOString()}`,
+    `- Count: ${memories.length}`,
+    ""
+  ];
+  for (const memory of memories) {
+    lines.push(`## ${memory.summary || memory.id}`);
+    lines.push("");
+    lines.push(`- ID: ${memory.id}`);
+    lines.push(`- Tags: ${(memory.tags ?? []).join(", ") || "none"}`);
+    lines.push(`- Importance: ${memory.importance}`);
+    lines.push(`- Confidence: ${memory.confidence}`);
+    lines.push(`- Source: ${memory.sourceType ?? SOURCE_TYPES.INPUT_EVENT}${memory.sourceId ? ` (${memory.sourceId})` : ""}`);
+    lines.push(`- Created: ${memory.createdAt}`);
+    lines.push(`- Updated: ${memory.updatedAt}`);
+    lines.push("");
+    lines.push(memory.content ?? "");
+    lines.push("");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function timestampForFile() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function formatBytes(value) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatScore(value) {
+  const score = Number(value ?? 0);
+  return Number.isFinite(score) ? score.toFixed(3) : "0.000";
+}
+
+function printWarnings(warnings) {
+  if (!Array.isArray(warnings) || warnings.length === 0) return;
+  console.log("注意:");
+  for (const warning of warnings.slice(0, 4)) {
+    console.log(`  - ${warning}`);
+  }
+}
+
+function clampCliNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
 }

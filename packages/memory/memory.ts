@@ -13,6 +13,8 @@ const STOP_WORDS = new Set([
   "应该"
 ]);
 
+const CJK_TOKEN_MIN_LENGTH = 2;
+
 export function normalizeForSimilarity(value: unknown): string {
   return normalizeToText(value)
     .toLowerCase()
@@ -23,8 +25,10 @@ export function normalizeForSimilarity(value: unknown): string {
 export function tokenize(value: unknown): string[] {
   const normalized = normalizeForSimilarity(value);
   const latin = normalized.match(/[a-z0-9_-]{2,}/g) ?? [];
-  const cjk = normalized.match(/\p{Script=Han}/gu) ?? [];
-  return [...new Set([...latin, ...cjk].filter((token) => !STOP_WORDS.has(token)))];
+  const cjkChars = normalized.match(/\p{Script=Han}/gu) ?? [];
+  const cjkWords = normalized.match(/\p{Script=Han}{2,}/gu) ?? [];
+  const cjkNgrams = cjkWords.flatMap((word) => buildCharacterNgrams(word, CJK_TOKEN_MIN_LENGTH, 4));
+  return [...new Set([...latin, ...cjkChars, ...cjkNgrams].filter((token) => !STOP_WORDS.has(token)))];
 }
 
 export function similarityScore(a: unknown, b: unknown): number {
@@ -48,4 +52,15 @@ export function similarityScore(a: unknown, b: unknown): number {
 export function normalizeToText(content: unknown): string {
   if (typeof content === "string") return content;
   return JSON.stringify(content, null, 2);
+}
+
+function buildCharacterNgrams(value: string, minLength: number, maxLength: number): string[] {
+  const chars = [...value];
+  const tokens: string[] = [];
+  for (let size = minLength; size <= Math.min(maxLength, chars.length); size += 1) {
+    for (let index = 0; index <= chars.length - size; index += 1) {
+      tokens.push(chars.slice(index, index + size).join(""));
+    }
+  }
+  return tokens;
 }

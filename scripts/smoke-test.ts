@@ -1,9 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { RUNTIME_EVENT_TYPES, SOURCE_TYPES } from "../packages/shared/types.ts";
 
 const smokeDatabasePath = "data/neura-smoke-test.db";
 const approvalPath = "data/approval-smoke.txt";
+const largeFilePath = "data/large-input-smoke.md";
+const smokeBackupDir = "data/smoke-backups";
+const smokeExportDir = "data/smoke-exports";
 process.env.NEURA_MODEL_PROVIDER = process.env.NEURA_MODEL_PROVIDER || "mock";
 process.env.NEURA_DATABASE_PATH = process.env.NEURA_DATABASE_PATH || smokeDatabasePath;
 process.env.DOTENV_CONFIG_QUIET = process.env.DOTENV_CONFIG_QUIET || "true";
@@ -14,6 +17,16 @@ if (existsSync(smokeDatabasePath)) {
 if (existsSync(approvalPath)) {
   unlinkSync(approvalPath);
 }
+if (existsSync(largeFilePath)) {
+  unlinkSync(largeFilePath);
+}
+if (existsSync(smokeBackupDir)) {
+  rmSync(smokeBackupDir, { recursive: true, force: true });
+}
+if (existsSync(smokeExportDir)) {
+  rmSync(smokeExportDir, { recursive: true, force: true });
+}
+mkdirSync(smokeExportDir, { recursive: true });
 
 function run(args) {
   return execFileSync("bun", ["./bin/neura.ts", ...args], {
@@ -38,6 +51,16 @@ if (!status.includes("连接状态:")) {
   throw new Error("Expected status summary");
 }
 console.log("status: OK");
+
+const modelDoctor = run(["model", "doctor"]);
+if (!modelDoctor.includes("OK Provider") || !modelDoctor.includes("OK API key")) {
+  throw new Error("Expected model doctor to validate mock provider");
+}
+const modelTest = run(["model", "test"]);
+if (!modelTest.includes("模型请求成功")) {
+  throw new Error("Expected model test to call mock model successfully");
+}
+console.log("model diagnostics: OK");
 
 const input = run(["input", "我想让 Neura 的插件体系保持极简，只分为输入插件和输出插件"]);
 if (!input.includes("已处理输入")) {
@@ -67,12 +90,21 @@ if (!tagUpdate.includes("产品核心")) {
 }
 console.log("memory tag update: OK");
 
+const editedMemory = run(["memory", "edit", memoryId, "--summary", "[产品设定] Neura 插件体系只分输入插件和输出插件", "--importance", "5", "--confidence", "0.99"]);
+if (!editedMemory.includes("已编辑记忆") || !editedMemory.includes("产品设定")) {
+  throw new Error("Expected memory edit command to update summary");
+}
+console.log("memory edit: OK");
+
 const memories = run(["memory", "search", "插件体系"]);
 if (!memories.includes("插件") || !memories.includes("产品核心")) {
   throw new Error("Expected memory search to return plugin-related memory");
 }
 if (!memories.includes("来源: input_event")) {
   throw new Error("Expected memories to show input_event source");
+}
+if (!memories.includes("相关性:") || !memories.includes("命中原因:")) {
+  throw new Error("Expected memory search to expose relevance score and match reasons");
 }
 console.log("memory search: OK");
 
@@ -152,6 +184,19 @@ if (!currentSummary.includes("任务类型: summarize_current") || !currentSumma
 }
 console.log("current summary: OK");
 
+writeFileSync(largeFilePath, `${"Neura 大文件预算测试。\n".repeat(4000)}最后一行：不要一次性把超长文件完整塞给模型。`);
+const largeFileInput = run(["input-file", largeFilePath, "这是一个大文件预算测试"]);
+if (!largeFileInput.includes("已处理文件输入") || !largeFileInput.includes("输入超过单次模型预算")) {
+  throw new Error("Expected large file input to use ingest budget warnings");
+}
+console.log("large file ingest budget: OK");
+
+const urlInput = run(["input-url", "https://example.com/neura", "收藏这个链接"]);
+if (!urlInput.includes("已处理链接输入")) {
+  throw new Error("Expected URL input to be recorded without fetching content");
+}
+console.log("url input: OK");
+
 const reminderWordOnly = run(["input", "帮我总结：提醒这个词只是在文章里出现，不代表要创建提醒。这个系统应该理解语境，而不是看到关键词就行动。"]);
 if (reminderWordOnly.includes("任务类型: reminder") || reminderWordOnly.includes("定时任务:")) {
   throw new Error("Expected reminder keyword without time to avoid schedule creation");
@@ -163,6 +208,30 @@ if (!memoryQuery.includes("任务类型: memory_query") || !memoryQuery.includes
   throw new Error("Expected history query to search memory");
 }
 console.log("memory query decision: OK");
+
+const mergeSource = run(["input", "记住：Neura 的输出插件只负责把结果送到 CLI、日志、通知或管理界面"]);
+const mergeSourceId = mergeSource.match(/记忆 ID: (memory_[^\n]+)/)?.[1];
+if (!mergeSourceId) {
+  throw new Error("Expected merge source input to create or update memory");
+}
+if (mergeSourceId !== memoryId) {
+  const merged = run(["memory", "merge", memoryId, mergeSourceId, "--yes"]);
+  if (!merged.includes("已合并记忆到") || !merged.includes(mergeSourceId)) {
+    throw new Error("Expected memory merge command to merge source memory");
+  }
+}
+console.log("memory merge: OK");
+
+const deleteInput = run(["input", "记住：这是一条用于删除测试的临时记忆"]);
+const deleteMemoryId = deleteInput.match(/记忆 ID: (memory_[^\n]+)/)?.[1];
+if (!deleteMemoryId) {
+  throw new Error("Expected delete test input to create memory");
+}
+const deletedMemory = run(["memory", "delete", deleteMemoryId, "--yes"]);
+if (!deletedMemory.includes("已删除记忆")) {
+  throw new Error("Expected memory delete command to delete memory");
+}
+console.log("memory delete: OK");
 
 const records = run(["records", "list"]);
 if (!records.includes("类型: memory_query") || !records.includes("决策:")) {
@@ -209,5 +278,37 @@ if (!unarchived.includes("已取消归档")) {
   throw new Error("Expected record unarchive command to restore record");
 }
 console.log("record archive: OK");
+
+const backup = run(["backup", "create", "-o", smokeBackupDir]);
+if (!backup.includes("已创建备份")) {
+  throw new Error("Expected backup command to create a database backup");
+}
+const backupList = run(["backup", "list", "-d", smokeBackupDir]);
+if (!backupList.includes(".db")) {
+  throw new Error("Expected backup list to show created backup");
+}
+console.log("backup: OK");
+
+const memoryExportMdPath = `${smokeExportDir}/memories.md`;
+const memoryExportJsonPath = `${smokeExportDir}/memories.json`;
+const memoryExportMd = run(["memory", "export", "--format", "md", "-o", memoryExportMdPath]);
+const memoryExportJson = run(["memory", "export", "--format", "json", "-o", memoryExportJsonPath]);
+if (!memoryExportMd.includes("已导出记忆") || !existsSync(memoryExportMdPath)) {
+  throw new Error("Expected markdown memory export to create a file");
+}
+if (!memoryExportJson.includes("已导出记忆") || !existsSync(memoryExportJsonPath)) {
+  throw new Error("Expected JSON memory export to create a file");
+}
+const memoryImport = run(["memory", "import", memoryExportJsonPath, "--yes"]);
+if (!memoryImport.includes("已导入记忆") || !memoryImport.includes("更新:")) {
+  throw new Error("Expected memory import to process exported JSON file");
+}
+console.log("memory export/import: OK");
+
+rmSync(smokeBackupDir, { recursive: true, force: true });
+rmSync(smokeExportDir, { recursive: true, force: true });
+if (existsSync(largeFilePath)) {
+  unlinkSync(largeFilePath);
+}
 
 console.log("Smoke test passed");

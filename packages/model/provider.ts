@@ -1,10 +1,11 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { ChatOpenAI } from "@langchain/openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { z } from "zod";
+import { formatContentForModel } from "../core/ingest-budget.ts";
 
 const AnalysisSchema = z.object({
   summary: z.string().min(1),
@@ -27,6 +28,7 @@ const AnalysisSchema = z.object({
 });
 
 const ANALYSIS_TOOL_NAME = "record_neura_input_analysis";
+const MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 const ANALYSIS_TOOL_OPENAI = {
   type: "function",
@@ -778,8 +780,7 @@ function inferMockMemoryType(contentText, inputEvent) {
 }
 
 function formatContent(content) {
-  if (typeof content === "string") return content;
-  return JSON.stringify(content, null, 2);
+  return formatContentForModel(content);
 }
 
 function getImageAttachment(inputEvent) {
@@ -787,6 +788,8 @@ function getImageAttachment(inputEvent) {
   const path = inputEvent.content?.path ?? inputEvent.content?.imagePath ?? inputEvent.metadata?.path;
   if (!path) return null;
   const absolutePath = resolve(path);
+  const stat = statSync(absolutePath);
+  if (stat.size > MAX_IMAGE_ATTACHMENT_BYTES) return null;
   const base64 = readFileSync(absolutePath).toString("base64");
   return {
     path: absolutePath,

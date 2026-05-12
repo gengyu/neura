@@ -4,6 +4,7 @@ import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { z } from "zod";
 import { normalizeInputEvent } from "./input-normalizer.ts";
+import { formatContentForModel } from "./ingest-budget.ts";
 import { recallMemories } from "../memory/memory-recall.ts";
 import type {
   AgentLoopRepository,
@@ -622,8 +623,7 @@ function formatMemories(memories: MemoryRecord[]): string {
 }
 
 function formatContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  return JSON.stringify(content, null, 2);
+  return formatContentForModel(content);
 }
 
 function buildModelRequestMetadata({ mode, inputEventId, messages, tools }: { mode: string; inputEventId: unknown; messages: unknown[]; tools: unknown[] }) {

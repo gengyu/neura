@@ -8,6 +8,8 @@ export class SQLiteStore {
     mkdirSync(dirname(this.databasePath), { recursive: true });
     this.db = new Database(this.databasePath, { create: true });
     this.db.exec("PRAGMA journal_mode = WAL;");
+    this.db.exec("PRAGMA foreign_keys = ON;");
+    this.db.exec("PRAGMA busy_timeout = 5000;");
     this.quoteStatement = this.db.query("SELECT quote(?) AS value");
   }
 
@@ -17,6 +19,10 @@ export class SQLiteStore {
 
   query(sql) {
     return this.db.query(sql).all();
+  }
+
+  checkpoint() {
+    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
   }
 
   value(value) {
@@ -146,6 +152,11 @@ export class SQLiteStore {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );`,
+      `CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL
       );`
     ];
     for (const statement of statements) {
@@ -165,6 +176,11 @@ export class SQLiteStore {
     this.ensureColumn("confirmation_requests", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
     this.ensureColumn("schedules", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
     this.ensureColumn("logs", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.createIndexes();
+    this.run(`
+      INSERT OR IGNORE INTO schema_migrations (version, name, applied_at)
+      VALUES (1, 'initial_runtime_schema', datetime('now'));
+    `);
     this.run("DROP TABLE IF EXISTS memory_vectors;");
   }
 
@@ -173,6 +189,24 @@ export class SQLiteStore {
     if (!columns.length) return;
     if (!columns.some((item) => item.name === column)) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+    }
+  }
+
+  createIndexes() {
+    const indexes = [
+      "CREATE INDEX IF NOT EXISTS idx_input_events_agent_created ON input_events(agent_id, created_at DESC);",
+      "CREATE INDEX IF NOT EXISTS idx_tasks_agent_created ON tasks(agent_id, created_at DESC);",
+      "CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(agent_id, source_type, source_id);",
+      "CREATE INDEX IF NOT EXISTS idx_memories_agent_updated ON memories(agent_id, updated_at DESC);",
+      "CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(agent_id, source_type, source_id);",
+      "CREATE INDEX IF NOT EXISTS idx_output_events_agent_created ON output_events(agent_id, created_at DESC);",
+      "CREATE INDEX IF NOT EXISTS idx_tool_calls_agent_created ON tool_calls(agent_id, created_at DESC);",
+      "CREATE INDEX IF NOT EXISTS idx_confirmation_requests_agent_status ON confirmation_requests(agent_id, status, created_at DESC);",
+      "CREATE INDEX IF NOT EXISTS idx_schedules_agent_status_run ON schedules(agent_id, status, run_at);",
+      "CREATE INDEX IF NOT EXISTS idx_logs_agent_created ON logs(agent_id, created_at DESC);"
+    ];
+    for (const index of indexes) {
+      this.run(index);
     }
   }
 }

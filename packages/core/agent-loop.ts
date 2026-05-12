@@ -146,7 +146,10 @@ export class AgentLoop {
         importance: effectiveAnalysis.importance,
         confidence: effectiveAnalysis.confidence,
         extractedFacts: effectiveAnalysis.extractedFacts ?? [],
-        warnings: effectiveAnalysis.warnings ?? [],
+        warnings: [
+          ...(effectiveAnalysis.warnings ?? []),
+          ...extractIngestWarnings(inputEvent.content)
+        ],
         normalizedInput: {
           title: normalizedInput.title,
           inputType: normalizedInput.inputType,
@@ -245,4 +248,10 @@ export class AgentLoop {
       throw error;
     }
   }
+}
+
+function extractIngestWarnings(content: unknown): string[] {
+  if (!content || typeof content !== "object") return [];
+  const warnings = (content as { ingest?: { warnings?: unknown } }).ingest?.warnings;
+  return Array.isArray(warnings) ? warnings.map(String) : [];
 }
