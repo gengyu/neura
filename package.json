@@ -22,6 +22,8 @@
     "@anthropic-ai/sdk": "^0.92.0",
     "@langchain/classic": "^1.0.32",
     "@langchain/core": "^1.1.45",
+    "@langchain/langgraph": "^1.3.0",
+    "@langchain/openai": "^1.4.5",
     "chokidar": "^5.0.0",
     "commander": "^14.0.3",
     "cosine-similarity": "^1.0.1",

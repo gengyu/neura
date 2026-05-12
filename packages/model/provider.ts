@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
+import { ChatOpenAI } from "@langchain/openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { z } from "zod";
 
@@ -46,14 +47,28 @@ export class OpenAICompatibleModelProvider {
   constructor(options = {}) {
     this.id = options.id ?? options.provider ?? "openai-compatible";
     this.model = options.model ?? "deepseek-chat";
+    this.baseUrl = trimTrailingSlash(options.baseUrl);
+    this.timeoutMs = options.timeoutMs ?? 30000;
     this.apiKey = options.apiKey ?? process.env[options.apiKeyEnv ?? "OPENAI_API_KEY"];
     if (!this.apiKey) {
       throw new Error(`Missing API key for OpenAI-compatible provider "${this.id}". Set ${options.apiKeyEnv ?? "OPENAI_API_KEY"} environment variable.`);
     }
     this.client = new OpenAI({
       apiKey: this.apiKey,
-      baseURL: trimTrailingSlash(options.baseUrl),
-      timeout: options.timeoutMs ?? 30000
+      baseURL: this.baseUrl,
+      timeout: this.timeoutMs
+    });
+  }
+
+  asLangChainChatModel() {
+    return new ChatOpenAI({
+      model: this.model,
+      apiKey: this.apiKey,
+      temperature: 0.2,
+      timeout: this.timeoutMs,
+      configuration: {
+        baseURL: this.baseUrl
+      }
     });
   }
 
