@@ -1,4 +1,4 @@
-import { normalizeToText } from "../memory/memory.ts";
+import { normalizeToText } from "./memory.ts";
 import { SOURCE_TYPES } from "../shared/types.ts";
 import type {
   AnalysisResult,
@@ -9,7 +9,7 @@ import type {
   MemoryPersistenceRepository,
   NormalizedInput,
   SynthesisResult
-} from "./types.ts";
+} from "../core/types.ts";
 
 export async function writeMemoryForDecision({
   repository,

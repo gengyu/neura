@@ -11,13 +11,13 @@ const AnalysisSchema = z.object({
   taskType: z.string().default("context_capture"),
   category: z.string().default("context_summary"),
   intent: z.string().default("capture_context"),
-  remembered: z.boolean(),
+  remembered: z.boolean().default(false),
   memoryType: z.string().default("上下文总结"),
   memoryReason: z.string().default("contains_long_term_value"),
   memoryActionHint: z.enum(["create", "update", "create_or_update", "skip"]).default("create_or_update"),
-  importance: z.number().min(1).max(5),
-  confidence: z.number().min(0).max(1),
-  shouldOutput: z.boolean(),
+  importance: z.coerce.number().min(1).max(5).default(3),
+  confidence: z.coerce.number().min(0).max(1).default(0.7),
+  shouldOutput: z.boolean().default(false),
   outputType: z.string().default("summary"),
   outputReason: z.string().default("model_decision"),
   outputPriority: z.enum(["low", "medium", "high"]).default("medium"),
@@ -60,9 +60,10 @@ export class OpenAICompatibleModelProvider {
   async analyzeInput(inputEvent, context = {}, options = {}) {
     const executeTool = options.executeTool;
     const extraTools = (options.tools ?? []).map(toOpenAITool);
+    const logModelRequest = options.logModelRequest;
 
-    if (!executeTool || extraTools.length === 0) {
-      return this._singleShot(inputEvent, context);
+    if (!executeTool) {
+      return this._singleShot(inputEvent, context, { logModelRequest });
     }
 
     const systemPrompt = [
@@ -88,16 +89,46 @@ export class OpenAICompatibleModelProvider {
       { role: "user", content: buildOpenAIUserContent(inputEvent, context) }
     ];
     const allTools = [...extraTools, ANALYSIS_TOOL_OPENAI];
-    let searchedMemory = hasRelatedMemories(context);
+    let searchedMemory = hasRelatedMemories(context) || !hasTool(allTools, "search_memory");
     const relatedMemories = new Map();
     collectRelatedMemories(relatedMemories, context.relatedMemories ?? []);
 
     for (let i = 0; i < 5; i++) {
-      const response = await this.client.chat.completions.create({
+      const requestMetadata = buildModelRequestMetadata({
+        provider: this.id,
         model: this.model,
-        temperature: 0.2,
+        mode: "openai-compatible.tools",
+        inputEventId: inputEvent.id,
+        iteration: i + 1,
         messages,
         tools: allTools
+      });
+      emitModelRequestLog(logModelRequest, "info", "Model request started", requestMetadata);
+      let response;
+      try {
+        const request: Record<string, unknown> = {
+          model: this.model,
+          temperature: 0.2,
+          messages,
+          tools: allTools
+        };
+        if (extraTools.length === 0) {
+          request.tool_choice = { type: "function", function: { name: ANALYSIS_TOOL_NAME } };
+        }
+        response = await this.client.chat.completions.create(request);
+      } catch (error) {
+        emitModelRequestLog(logModelRequest, "error", "Model request failed", {
+          ...requestMetadata,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        throw error;
+      }
+      emitModelRequestLog(logModelRequest, "info", "Model request completed", {
+        ...requestMetadata,
+        responseId: response.id ?? null,
+        responseModel: response.model ?? null,
+        finishReason: response.choices?.[0]?.finish_reason ?? null,
+        usage: normalizeOpenAIUsage(response.usage)
       });
 
       const msg = response.choices[0]?.message;
@@ -146,25 +177,53 @@ export class OpenAICompatibleModelProvider {
     throw new Error("Model did not produce analysis after max iterations");
   }
 
-  async _singleShot(inputEvent, context) {
-    const completion = await this.client.beta.chat.completions.parse({
+  async _singleShot(inputEvent, context, options = {}) {
+    const messages = [
+      {
+        role: "system",
+        content: "你是 Neura 的 Agent Loop 分析器。请把输入事件分析成结构化结果，只保留有长期价值的信息。"
+      },
+      {
+        role: "user",
+        content: buildOpenAIUserContent(inputEvent, context)
+      }
+    ];
+    const requestMetadata = buildModelRequestMetadata({
+      provider: this.id,
       model: this.model,
-      temperature: 0.2,
-      response_format: zodResponseFormat(AnalysisSchema, "neura_input_analysis"),
-      messages: [
-        {
-          role: "system",
-          content: "你是 Neura 的 Agent Loop 分析器。请把输入事件分析成结构化结果，只保留有长期价值的信息。"
-        },
-        {
-          role: "user",
-          content: buildOpenAIUserContent(inputEvent, context)
-        }
-      ]
+      mode: "openai-compatible.single-shot",
+      inputEventId: inputEvent.id,
+      iteration: 1,
+      messages,
+      tools: []
+    });
+    emitModelRequestLog(options.logModelRequest, "info", "Model request started", requestMetadata);
+    let completion;
+    try {
+      completion = await this.client.chat.completions.create({
+        model: this.model,
+        temperature: 0.2,
+        response_format: zodResponseFormat(AnalysisSchema, "neura_input_analysis"),
+        messages
+      });
+    } catch (error) {
+      emitModelRequestLog(options.logModelRequest, "error", "Model request failed", {
+        ...requestMetadata,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    }
+    emitModelRequestLog(options.logModelRequest, "info", "Model request completed", {
+      ...requestMetadata,
+      responseId: completion.id ?? null,
+      responseModel: completion.model ?? null,
+      finishReason: completion.choices?.[0]?.finish_reason ?? null,
+      usage: normalizeOpenAIUsage(completion.usage)
     });
 
-    const parsed = completion.choices[0]?.message?.parsed;
-    if (!parsed) throw new Error("OpenAI-compatible provider returned empty analysis");
+    const content = completion.choices[0]?.message?.content;
+    if (!content) throw new Error("OpenAI-compatible provider returned empty analysis");
+    const parsed = AnalysisSchema.parse(JSON.parse(content));
     return normalizeAnalysis({ provider: this.id, ...parsed });
   }
 }
@@ -199,9 +258,10 @@ export class AnthropicCompatibleModelProvider {
   async analyzeInput(inputEvent, context = {}, options = {}) {
     const executeTool = options.executeTool;
     const extraTools = (options.tools ?? []).map(toAnthropicTool);
+    const logModelRequest = options.logModelRequest;
 
-    if (!executeTool || extraTools.length === 0) {
-      return this._singleShot(inputEvent, context);
+    if (!executeTool) {
+      return this._singleShot(inputEvent, context, { logModelRequest });
     }
 
     const systemPrompt = [
@@ -226,18 +286,49 @@ export class AnthropicCompatibleModelProvider {
       { role: "user", content: buildAnthropicUserContent(inputEvent, context) }
     ];
     const allTools = [...extraTools, ANALYSIS_TOOL_ANTHROPIC];
-    let searchedMemory = hasRelatedMemories(context);
+    let searchedMemory = hasRelatedMemories(context) || !hasTool(allTools, "search_memory");
     const relatedMemories = new Map();
     collectRelatedMemories(relatedMemories, context.relatedMemories ?? []);
 
     for (let i = 0; i < 5; i++) {
-      const response = await this.client.messages.create({
+      const requestMetadata = buildModelRequestMetadata({
+        provider: this.id,
         model: this.model,
-        max_tokens: 1024,
-        temperature: 0.2,
-        system: systemPrompt,
+        mode: "anthropic-compatible.tools",
+        inputEventId: inputEvent.id,
+        iteration: i + 1,
+        messages,
         tools: allTools,
-        messages
+        system: systemPrompt
+      });
+      emitModelRequestLog(logModelRequest, "info", "Model request started", requestMetadata);
+      let response;
+      try {
+        const request: Record<string, unknown> = {
+          model: this.model,
+          max_tokens: 1024,
+          temperature: 0.2,
+          system: systemPrompt,
+          tools: allTools,
+          messages
+        };
+        if (extraTools.length === 0) {
+          request.tool_choice = { type: "tool", name: ANALYSIS_TOOL_NAME };
+        }
+        response = await this.client.messages.create(request);
+      } catch (error) {
+        emitModelRequestLog(logModelRequest, "error", "Model request failed", {
+          ...requestMetadata,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        throw error;
+      }
+      emitModelRequestLog(logModelRequest, "info", "Model request completed", {
+        ...requestMetadata,
+        responseId: response.id ?? null,
+        responseModel: response.model ?? null,
+        stopReason: response.stop_reason ?? null,
+        usage: normalizeAnthropicUsage(response.usage)
       });
 
       const toolUses = response.content.filter((part) => part.type === "tool_use");
@@ -293,20 +384,50 @@ export class AnthropicCompatibleModelProvider {
     throw new Error("Model did not produce analysis after max iterations");
   }
 
-  async _singleShot(inputEvent, context) {
-    const message = await this.client.messages.create({
+  async _singleShot(inputEvent, context, options = {}) {
+    const messages = [
+      {
+        role: "user",
+        content: buildAnthropicUserContent(inputEvent, context)
+      }
+    ];
+    const system = "你是 Neura 的 Agent Loop 分析器。请调用工具返回结构化分析结果。";
+    const tools = [ANALYSIS_TOOL_ANTHROPIC];
+    const requestMetadata = buildModelRequestMetadata({
+      provider: this.id,
       model: this.model,
-      max_tokens: 800,
-      temperature: 0.2,
-      system: "你是 Neura 的 Agent Loop 分析器。请调用工具返回结构化分析结果。",
-      tools: [ANALYSIS_TOOL_ANTHROPIC],
-      tool_choice: { type: "tool", name: ANALYSIS_TOOL_NAME },
-      messages: [
-        {
-          role: "user",
-          content: buildAnthropicUserContent(inputEvent, context)
-        }
-      ]
+      mode: "anthropic-compatible.single-shot",
+      inputEventId: inputEvent.id,
+      iteration: 1,
+      messages,
+      tools,
+      system
+    });
+    emitModelRequestLog(options.logModelRequest, "info", "Model request started", requestMetadata);
+    let message;
+    try {
+      message = await this.client.messages.create({
+        model: this.model,
+        max_tokens: 800,
+        temperature: 0.2,
+        system,
+        tools,
+        tool_choice: { type: "tool", name: ANALYSIS_TOOL_NAME },
+        messages
+      });
+    } catch (error) {
+      emitModelRequestLog(options.logModelRequest, "error", "Model request failed", {
+        ...requestMetadata,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    }
+    emitModelRequestLog(options.logModelRequest, "info", "Model request completed", {
+      ...requestMetadata,
+      responseId: message.id ?? null,
+      responseModel: message.model ?? null,
+      stopReason: message.stop_reason ?? null,
+      usage: normalizeAnthropicUsage(message.usage)
     });
 
     const toolUse = message.content.find((part) => part.type === "tool_use" && part.name === ANALYSIS_TOOL_NAME);
@@ -404,16 +525,96 @@ function toAnthropicTool(tool) {
 
 function buildPrompt(inputEvent, context) {
   return [
-    `输入类型：${inputEvent.type}`,
-    `输入标准化画像：${formatNormalizedInput(context.normalizedInput)}`,
-    `输入内容：${formatContent(inputEvent.content)}`,
-    `已有上下文提示：${formatExistingContext(context)}`,
-    "如果已有上下文提示为空或不足，请使用 search_memory 搜索与输入最相关的记忆。搜索查询应来自输入主题、实体、项目名、关键决策或用户意图。",
+    "请按以下稳定规则分析输入，返回结构化结果。",
+    "如果 search_memory 工具可用且已有上下文提示为空或不足，请搜索与输入最相关的记忆。搜索查询应来自输入主题、实体、项目名、关键决策或用户意图。",
     "请判断 taskType，并给出摘要、标签、分类(category)、意图(intent)、记忆类型(memoryType)、记忆理由(memoryReason)、重要性和输出决策。",
     "taskType 稳定值：context_capture、memory_capture、summarize_current、memory_query、query、reminder、action_request、event_capture、knowledge_ingest、visual_capture、decision_capture、preference_capture。",
     "总结当前长内容使用 summarize_current；查询历史记录使用 memory_query；明确要求记住/保存时 remembered=true。",
-    "输出决策规则：普通记录/收藏/上下文沉淀通常 shouldOutput=false；用户明确询问、命令执行结果、错误、确认请求、重要提醒或外部同步响应才 shouldOutput=true。"
+    "输出决策规则：普通记录/收藏/上下文沉淀通常 shouldOutput=false；用户明确询问、命令执行结果、错误、确认请求、重要提醒或外部同步响应才 shouldOutput=true。",
+    "",
+    "以下是本次动态输入：",
+    `输入类型：${inputEvent.type}`,
+    `输入标准化画像：${formatNormalizedInput(context.normalizedInput)}`,
+    `已有上下文提示：${formatExistingContext(context)}`,
+    `输入内容：${formatContent(inputEvent.content)}`
   ].join("\n");
+}
+
+function emitModelRequestLog(logger, level, message, metadata) {
+  if (typeof logger !== "function") return;
+  try {
+    logger(level, message, metadata);
+  } catch {
+    // Model execution must not fail because logging failed.
+  }
+}
+
+function buildModelRequestMetadata({ provider, model, mode, inputEventId, iteration, messages, tools, system = "" }) {
+  const serializedMessages = safeJsonLength(messages);
+  const serializedTools = safeJsonLength(tools);
+  return {
+    provider,
+    model,
+    mode,
+    inputEventId,
+    iteration,
+    messageCount: Array.isArray(messages) ? messages.length : 0,
+    toolCount: Array.isArray(tools) ? tools.length : 0,
+    toolNames: summarizeToolNames(tools),
+    relatedMemoryCount: countRelatedMemoryMentions(messages),
+    hasImageInput: hasMessagePartType(messages, "image_url") || hasMessagePartType(messages, "image"),
+    systemChars: String(system ?? "").length,
+    messagesChars: serializedMessages,
+    toolsChars: serializedTools,
+    approximateRequestChars: serializedMessages + serializedTools + String(system ?? "").length
+  };
+}
+
+function normalizeOpenAIUsage(usage = null) {
+  if (!usage) return null;
+  return {
+    promptTokens: usage.prompt_tokens ?? null,
+    completionTokens: usage.completion_tokens ?? null,
+    totalTokens: usage.total_tokens ?? null,
+    cachedTokens: usage.prompt_tokens_details?.cached_tokens ?? null,
+    reasoningTokens: usage.completion_tokens_details?.reasoning_tokens ?? null
+  };
+}
+
+function normalizeAnthropicUsage(usage = null) {
+  if (!usage) return null;
+  return {
+    inputTokens: usage.input_tokens ?? null,
+    outputTokens: usage.output_tokens ?? null,
+    cacheCreationInputTokens: usage.cache_creation_input_tokens ?? null,
+    cacheReadInputTokens: usage.cache_read_input_tokens ?? null
+  };
+}
+
+function safeJsonLength(value) {
+  try {
+    return JSON.stringify(value ?? null).length;
+  } catch {
+    return 0;
+  }
+}
+
+function summarizeToolNames(tools = []) {
+  if (!Array.isArray(tools)) return [];
+  return tools.map((tool) => tool.function?.name ?? tool.name).filter(Boolean);
+}
+
+function hasTool(tools = [], name) {
+  return summarizeToolNames(tools).includes(name);
+}
+
+function countRelatedMemoryMentions(messages = []) {
+  const text = JSON.stringify(messages ?? []);
+  return (text.match(/memory_[a-z0-9_]+/g) ?? []).length;
+}
+
+function hasMessagePartType(messages = [], type) {
+  return JSON.stringify(messages ?? []).includes(`"type":"${type}"`);
 }
 
 function buildOpenAIUserContent(inputEvent, context) {

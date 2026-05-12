@@ -225,7 +225,7 @@ Agent Loop 先做两件事：
 
 Agent Loop 会把结果进一步落地到：
 
-- `memory-writer.ts`
+- `packages/memory/memory-writer.ts`
   写入或更新记忆
 - `repository.createSchedule(...)`
   创建定时任务
@@ -598,7 +598,8 @@ flowchart LR
 
 - `packages/memory/memory.ts`
 - `packages/memory/langchain-memory.ts`
-- `packages/core/memory-writer.ts`
+- `packages/memory/memory-recall.ts`
+- `packages/memory/memory-writer.ts`
 - `packages/core/result-synthesizer.ts`
 - `packages/storage/repository.ts`
 

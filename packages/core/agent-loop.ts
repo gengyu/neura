@@ -3,8 +3,8 @@ import { normalizeInputEvent } from "./input-normalizer.ts";
 import { synthesizeCurrentInput, synthesizeResult } from "./result-synthesizer.ts";
 import { buildDecision } from "./decision-engine.ts";
 import { buildCaptureResult } from "./capture-result.ts";
-import { writeMemoryForDecision } from "./memory-writer.ts";
-import { recallMemories } from "./memory-recall.ts";
+import { recallMemories } from "../memory/memory-recall.ts";
+import { writeMemoryForDecision } from "../memory/memory-writer.ts";
 import type {
   AgentLoopRepository,
   AnalysisResult,
@@ -161,6 +161,9 @@ const AVAILABLE_TOOLS = [
   }
 ];
 
+const MINIMAL_TOOL_NAMES = new Set(["search_memory"]);
+const ACTION_TOOL_NAMES = new Set(["search_memory", "read_file", "write_file", "delete_file", "execute_command", "call_model", "http_request"]);
+
 export class AgentLoop {
   repository: AgentLoopRepository;
   policy: unknown;
@@ -199,11 +202,12 @@ export class AgentLoop {
       const recall = await recallMemories({ repository: this.repository, normalizedInput, limit: 5 });
       normalizedInput.memorySearchQuery = recall.query;
       const contextMemories = recall.memories;
+      const availableTools = this.tools ? selectToolsForInput(normalizedInput, contextMemories) : [];
       const toolset = this.tools;
       const executeTool = toolset
         ? async (name: string, input: ToolInput) => {
             // ToolStep: 工具执行阶段的实际调用逻辑
-            if (name === "search_memory") return toolset.searchMemory(input.query ?? "");
+            if (name === "search_memory") return slimMemoryToolResult(await toolset.searchMemory(input.query ?? ""));
             if (name === "read_file") return toolset.readFile(input.path ?? "");
             if (name === "write_file") return toolset.writeFile(input.path ?? "", input.content ?? "");
             if (name === "delete_file") return toolset.deleteFile(input.path ?? "");
@@ -218,7 +222,13 @@ export class AgentLoop {
       const analysis: AnalysisResult = await modelProvider.analyzeInput(
         inputEvent,
         { normalizedInput, relatedMemories: contextMemories },
-        { tools: this.tools ? AVAILABLE_TOOLS : [], executeTool }
+        {
+          tools: availableTools,
+          executeTool,
+          logModelRequest: (level: string, message: string, metadata: Record<string, unknown>) => {
+            this.repository.log(level, "model", message, metadata);
+          }
+        }
       );
 
       // === MemoryDecision: 基于分析结果决定记忆策略（新增/更新/跳过）===
@@ -355,4 +365,42 @@ export class AgentLoop {
       throw error;
     }
   }
+}
+
+function selectToolsForInput(normalizedInput: NormalizedInput, contextMemories: unknown[]): typeof AVAILABLE_TOOLS {
+  const signals = normalizedInput.signals;
+  const needsExternalAction =
+    signals.containsActionRequest ||
+    normalizedInput.file !== null ||
+    normalizedInput.image !== null ||
+    ["action_request", "knowledge_ingest", "visual_capture"].includes(normalizedInput.taskType);
+
+  const toolNames = needsExternalAction ? ACTION_TOOL_NAMES : MINIMAL_TOOL_NAMES;
+  const shouldSearchMemory =
+    normalizedInput.taskType === "memory_query" ||
+    (contextMemories.length === 0 && (signals.containsQuestion || signals.asksHistoryLookup));
+
+  return AVAILABLE_TOOLS.filter((tool) => {
+    if (tool.name === "search_memory") return shouldSearchMemory;
+    return toolNames.has(tool.name);
+  });
+}
+
+function slimMemoryToolResult(result: unknown): unknown {
+  if (!Array.isArray(result)) return result;
+  return result.slice(0, 5).map((memory: Record<string, unknown>) => ({
+    id: memory.id,
+    summary: truncateText(memory.summary, 220),
+    tags: Array.isArray(memory.tags) ? memory.tags.slice(0, 8) : [],
+    importance: memory.importance,
+    confidence: memory.confidence,
+    sourceType: memory.sourceType,
+    sourceId: memory.sourceId,
+    vectorScore: memory.vectorScore
+  }));
+}
+
+function truncateText(value: unknown, limit: number): string {
+  const text = String(value ?? "");
+  return text.length > limit ? `${text.slice(0, limit)}...` : text;
 }

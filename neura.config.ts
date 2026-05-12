@@ -30,10 +30,16 @@ export default {
     }
   },
   model: {
-    provider: "deepseek",
-    baseUrl: "https://api.deepseek.com",
-    anthropicBaseUrl: "https://api.deepseek.com/anthropic",
-    model: "deepseek-chat",
+    // provider: "deepseek",
+    // baseUrl: "https://api.deepseek.com",
+    // anthropicBaseUrl: "https://api.deepseek.com/anthropic",
+    // model: "deepseek-chat",
+    // apiKeyEnv: "DEEPSEEK_API_KEY",
+
+    provider: "openai-compatible",
+    baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+    anthropicBaseUrl: "https://token-plan-cn.xiaomimimo.com/anthropic",
+    model: "mimo-v2.5-pro",
     apiKeyEnv: "DEEPSEEK_API_KEY",
     timeoutMs: 30000
   },

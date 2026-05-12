@@ -1,5 +1,5 @@
-import { buildMemoryRecallQuery, searchMemoryRecords } from "../memory/langchain-memory.ts";
-import type { MemoryRecord, NormalizedInput } from "./types.ts";
+import { buildMemoryRecallQuery, searchMemoryRecords } from "./langchain-memory.ts";
+import type { MemoryRecord, NormalizedInput } from "../core/types.ts";
 
 type RecallRepository = {
   listMemories?: (limit: number) => MemoryRecord[];

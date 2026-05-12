@@ -10,6 +10,7 @@
     "neura": "bun ./bin/neura.ts",
     "start": "bun ./bin/neura.ts start",
     "stop": "bun ./bin/neura.ts stop",
+    "restart": "npm run stop && npm run start",
     "status": "bun ./bin/neura.ts status",
     "check": "bun ./bin/neura.ts status",
     "test": "NEURA_MODEL_PROVIDER=mock bun ./scripts/smoke-test.ts"

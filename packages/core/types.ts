@@ -197,6 +197,7 @@ export interface AnalyzeInputContext {
 export interface AnalyzeInputOptions {
   tools: unknown[];
   executeTool?: (name: string, input: ToolInput) => Promise<unknown>;
+  logModelRequest?: (level: string, message: string, metadata: GenericRecord) => void;
 }
 
 export interface ModelProvider {

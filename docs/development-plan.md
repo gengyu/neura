@@ -188,7 +188,7 @@ createOutputEvent({
 ```text
 packages/core/agent-loop.ts
 packages/core/decision-engine.ts
-packages/core/memory-writer.ts
+packages/memory/memory-writer.ts
 packages/core/capture-result.ts
 ```
 
