@@ -7,6 +7,8 @@ type MemoryLike = {
   summary?: string;
   content?: string;
   tags?: string[];
+  memoryKind?: string;
+  memoryType?: string | null;
   [key: string]: unknown;
 };
 
@@ -77,14 +79,16 @@ export async function searchMemoryRecords<T extends MemoryLike>(query: string, m
       const keywordScore = scoreKeywordOverlap(queryTokens, tokenSet, documentFrequencies, totalDocuments);
       const phraseScore = scorePhrase(query, text);
       const tagScore = scoreTags(queryTokens, memory.tags ?? []);
+      const kindScore = scoreMemoryKind(queryTokens, memory);
       const importanceScore = normalizeNumber(memory.importance, 5);
       const recencyScore = scoreRecency(memory.updatedAt ?? memory.createdAt);
       const textSimilarity = similarityScore(query, text);
       const score =
-        vectorScore * 0.32 +
-        keywordScore * 0.24 +
-        phraseScore * 0.16 +
+        vectorScore * 0.3 +
+        keywordScore * 0.22 +
+        phraseScore * 0.15 +
         tagScore * 0.12 +
+        kindScore * 0.05 +
         textSimilarity * 0.08 +
         importanceScore * 0.05 +
         recencyScore * 0.03;
@@ -96,11 +100,13 @@ export async function searchMemoryRecords<T extends MemoryLike>(query: string, m
         keywordScore: roundScore(keywordScore),
         phraseScore: roundScore(phraseScore),
         tagScore: roundScore(tagScore),
+        kindScore: roundScore(kindScore),
         importanceScore: roundScore(importanceScore),
         recencyScore: roundScore(recencyScore),
         matchReasons: buildMatchReasons({
           phraseScore,
           tagScore,
+          kindScore,
           keywordScore,
           vectorScore,
           importanceScore,
@@ -124,6 +130,8 @@ export function memoryToDocumentText(memory: MemoryLike): string {
   return [
     memory.summary,
     memory.content,
+    memory.memoryKind,
+    memory.memoryType,
     Array.isArray(memory.tags) ? memory.tags.join(" ") : ""
   ].filter(Boolean).join("\n");
 }
@@ -182,6 +190,17 @@ function scoreTags(queryTokens: string[], tags: string[]): number {
   return matched / queryTokens.length;
 }
 
+function scoreMemoryKind(queryTokens: string[], memory: MemoryLike): number {
+  const kindText = [memory.memoryKind, memory.memoryType].filter(Boolean).join(" ");
+  if (queryTokens.length === 0 || !kindText) return 0;
+  const kindTokens = new Set(tokenize(kindText));
+  let matched = 0;
+  for (const token of queryTokens) {
+    if (kindTokens.has(token) || kindText.includes(token)) matched += 1;
+  }
+  return matched / queryTokens.length;
+}
+
 function scoreRecency(value: unknown): number {
   const timestamp = Date.parse(String(value ?? ""));
   if (Number.isNaN(timestamp)) return 0;
@@ -212,6 +231,7 @@ function buildMatchReasons(scores: Record<string, number>): string[] {
   const reasons = [];
   if (scores.phraseScore >= 0.7) reasons.push("phrase_match");
   if (scores.tagScore >= 0.4) reasons.push("tag_match");
+  if (scores.kindScore >= 0.4) reasons.push("memory_kind_match");
   if (scores.keywordScore >= 0.35) reasons.push("keyword_overlap");
   if (scores.vectorScore >= 0.35) reasons.push("semantic_similarity");
   if (scores.importanceScore >= 0.8) reasons.push("high_importance");

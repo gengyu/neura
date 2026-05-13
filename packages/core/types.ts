@@ -55,6 +55,10 @@ export interface MemoryRecord {
   summary: string;
   content: string;
   tags?: string[];
+  memoryKind?: string;
+  memoryType?: string | null;
+  conflictStatus?: string;
+  conflictMemoryIds?: unknown[];
   importance?: unknown;
   confidence?: unknown;
   [key: string]: unknown;
@@ -229,6 +233,12 @@ export interface SimilarMemoryMatch {
   score: number;
 }
 
+export interface MemoryConflictMatch {
+  memory: MemoryRecord;
+  score: number;
+  reasons: string[];
+}
+
 export interface ScheduleRunPayload {
   nextRunAt: string | null;
   status: string;
@@ -254,6 +264,7 @@ export interface MemorySearchRepository {
 
 export interface MemoryPersistenceRepository extends LoggingRepository {
   findSimilarMemory: (payload: GenericRecord, threshold: number) => Promise<SimilarMemoryMatch | null>;
+  findMemoryConflicts?: (payload: GenericRecord, options?: { limit?: number; excludeIds?: unknown[] }) => MemoryConflictMatch[];
   updateMemory: (id: unknown, payload: GenericRecord) => MemoryRecord;
   createMemory: (payload: GenericRecord) => MemoryRecord;
 }

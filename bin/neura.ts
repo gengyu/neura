@@ -62,8 +62,19 @@ const history = program.command("history").description("历史数据");
 history.command("clear").description("清空当前 Agent 的输入、记忆、任务、输出和日志").option("--yes", "跳过确认").action(clearHistory);
 
 const memory = program.command("memory").description("记忆");
-memory.command("list").description("列出记忆").action(listMemories);
-memory.command("search").description("搜索记忆").argument("<query...>", "搜索词").action(searchMemories);
+memory.command("list")
+  .description("列出记忆")
+  .option("--kind <kind>", "按记忆层级筛选")
+  .option("--conflicts", "只看疑似冲突记忆")
+  .action(listMemories);
+memory.command("search")
+  .description("搜索记忆")
+  .argument("<query...>", "搜索词")
+  .option("--kind <kind>", "按记忆层级筛选")
+  .option("--conflicts", "只看疑似冲突记忆")
+  .action(searchMemories);
+memory.command("stats").description("查看记忆分层统计").action(memoryStats);
+memory.command("conflicts").description("查看疑似冲突记忆").action(memoryConflicts);
 memory.command("tag")
   .description("更新记忆标签")
   .argument("<memoryId>", "记忆 ID")
@@ -77,6 +88,8 @@ memory.command("edit")
   .option("--summary <text>", "新的摘要")
   .option("--content <text>", "新的内容")
   .option("--tags <tags...>", "替换标签")
+  .option("--kind <kind>", "记忆层级: fact/preference/project/person/task/decision/knowledge/note")
+  .option("--type <type>", "原始记忆类型，例如 产品决策、偏好、知识片段")
   .option("--importance <number>", "重要性 1-5")
   .option("--confidence <number>", "置信度 0-1")
   .action(editMemory);
@@ -500,27 +513,30 @@ async function clearHistory(options = {}) {
   console.log(`日志: ${result.deleted.logs}`);
 }
 
-async function listMemories() {
+async function listMemories(options = {}) {
   const runtime = await createRuntime();
-  const memories = runtime.repository.listMemories();
+  const memories = runtime.repository.listMemories(20, { kind: options.kind, conflicts: options.conflicts });
   if (memories.length === 0) return console.log("还没有记忆。");
   for (const memory of memories) {
     console.log(`${memory.id}`);
     console.log(`  摘要: ${memory.summary}`);
+    console.log(`  类型: ${formatMemoryKind(memory)}`);
     console.log(`  标签: ${memory.tags.join(", ")}`);
     console.log(`  重要性: ${memory.importance}`);
+    printMemoryConflict(memory);
     console.log(`  来源: ${memory.sourceType ?? SOURCE_TYPES.INPUT_EVENT}${memory.sourceId ? ` (${memory.sourceId})` : ""}`);
     console.log(`  创建时间: ${memory.createdAt}`);
   }
 }
 
-async function searchMemories(queryParts) {
+async function searchMemories(queryParts, options = {}) {
   const runtime = await createRuntime();
-  const memories = await runtime.repository.searchMemories(queryParts.join(" ").trim());
+  const memories = await runtime.repository.searchMemories(queryParts.join(" ").trim(), 20, { kind: options.kind, conflicts: options.conflicts });
   if (memories.length === 0) return console.log("没有找到相关记忆。");
   for (const memory of memories) {
     console.log(`${memory.id}`);
     console.log(`  摘要: ${memory.summary}`);
+    console.log(`  类型: ${formatMemoryKind(memory)}`);
     console.log(`  标签: ${memory.tags.join(", ")}`);
     if (memory.score !== undefined || memory.vectorScore !== undefined) {
       console.log(`  相关性: ${formatScore(memory.score ?? memory.vectorScore)}`);
@@ -528,8 +544,36 @@ async function searchMemories(queryParts) {
     if (Array.isArray(memory.matchReasons) && memory.matchReasons.length > 0) {
       console.log(`  命中原因: ${memory.matchReasons.join(", ")}`);
     }
+    printMemoryConflict(memory);
     console.log(`  来源: ${memory.sourceType ?? SOURCE_TYPES.INPUT_EVENT}${memory.sourceId ? ` (${memory.sourceId})` : ""}`);
     console.log(`  内容: ${memory.content}`);
+  }
+}
+
+async function memoryConflicts() {
+  const runtime = await createRuntime();
+  const memories = runtime.repository.listMemories(50, { conflicts: true });
+  if (memories.length === 0) return console.log("当前没有疑似冲突记忆。");
+  for (const memory of memories) {
+    console.log(`${memory.id}`);
+    console.log(`  摘要: ${memory.summary}`);
+    console.log(`  类型: ${formatMemoryKind(memory)}`);
+    console.log(`  置信度: ${memory.confidence}`);
+    printMemoryConflict(memory);
+  }
+}
+
+async function memoryStats() {
+  const runtime = await createRuntime();
+  const stats = runtime.repository.memoryStats();
+  console.log(`记忆总数: ${stats.total}`);
+  console.log(`疑似冲突: ${stats.conflicts}`);
+  if (stats.byKind.length === 0) return;
+  for (const item of stats.byKind) {
+    console.log(`${item.kind}`);
+    console.log(`  数量: ${item.count}`);
+    console.log(`  平均重要性: ${item.averageImportance}`);
+    console.log(`  平均置信度: ${item.averageConfidence}`);
   }
 }
 
@@ -565,6 +609,8 @@ async function editMemory(memoryId, options = {}) {
   if (options.summary !== undefined) payload.summary = options.summary;
   if (options.content !== undefined) payload.content = options.content;
   if (Array.isArray(options.tags)) payload.tags = options.tags;
+  if (options.kind !== undefined) payload.memoryKind = options.kind;
+  if (options.type !== undefined) payload.memoryType = options.type;
   if (options.importance !== undefined) payload.importance = options.importance;
   if (options.confidence !== undefined) payload.confidence = options.confidence;
   if (Object.keys(payload).length === 0) {
@@ -572,6 +618,7 @@ async function editMemory(memoryId, options = {}) {
     if (!memory) return console.log(`没有找到记忆: ${memoryId}`);
     console.log(`${memory.id}`);
     console.log(`摘要: ${memory.summary}`);
+    console.log(`类型: ${formatMemoryKind(memory)}`);
     console.log(`标签: ${memory.tags.join(", ") || "无"}`);
     console.log(`重要性: ${memory.importance}`);
     console.log(`置信度: ${memory.confidence}`);
@@ -582,6 +629,7 @@ async function editMemory(memoryId, options = {}) {
   if (!updated) return console.log(`没有找到记忆: ${memoryId}`);
   console.log(`已编辑记忆: ${updated.id}`);
   console.log(`摘要: ${updated.summary}`);
+  console.log(`类型: ${formatMemoryKind(updated)}`);
   console.log(`标签: ${updated.tags.join(", ") || "无"}`);
 }
 
@@ -664,6 +712,8 @@ async function importMemories(path, options = {}) {
       content,
       summary,
       tags,
+      memoryKind: item.memoryKind ?? item.kind ?? null,
+      memoryType: item.memoryType ?? item.type ?? null,
       sourceInputId: item.sourceInputId ?? null,
       sourceType: item.sourceType ?? SOURCE_TYPES.MANUAL,
       sourceId: item.sourceId ?? absolutePath,
@@ -1058,6 +1108,17 @@ function formatMemoryAction(action) {
   return "跳过";
 }
 
+function formatMemoryKind(memory) {
+  const kind = memory.memoryKind ?? "note";
+  return memory.memoryType ? `${kind} (${memory.memoryType})` : kind;
+}
+
+function printMemoryConflict(memory) {
+  if (!memory || !memory.conflictStatus || memory.conflictStatus === "none") return;
+  const ids = Array.isArray(memory.conflictMemoryIds) ? memory.conflictMemoryIds.join(", ") : "";
+  console.log(`  冲突: ${memory.conflictStatus}${ids ? ` (${ids})` : ""}`);
+}
+
 function detectImageMimeType(path) {
   const extension = extname(path).toLowerCase();
   if (extension === ".png") return "image/png";
@@ -1110,6 +1171,8 @@ function renderMemoriesMarkdown({ agentId, memories }) {
     lines.push(`## ${memory.summary || memory.id}`);
     lines.push("");
     lines.push(`- ID: ${memory.id}`);
+    lines.push(`- Kind: ${memory.memoryKind ?? "note"}`);
+    if (memory.memoryType) lines.push(`- Type: ${memory.memoryType}`);
     lines.push(`- Tags: ${(memory.tags ?? []).join(", ") || "none"}`);
     lines.push(`- Importance: ${memory.importance}`);
     lines.push(`- Confidence: ${memory.confidence}`);

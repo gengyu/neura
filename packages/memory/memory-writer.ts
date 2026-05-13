@@ -1,4 +1,4 @@
-import { normalizeToText } from "./memory.ts";
+import { inferMemoryKind, normalizeToText } from "./memory.ts";
 import { SOURCE_TYPES } from "../shared/types.ts";
 import type {
   AnalysisResult,
@@ -42,15 +42,22 @@ export async function writeMemoryForDecision({
     memoryPayload,
     shouldUseStrictSimilarity(memoryDecision) ? 0.86 : 0.78
   );
+  const conflicts = repository.findMemoryConflicts?.(memoryPayload, {
+    excludeIds: similar?.memory?.id ? [similar.memory.id] : [],
+    limit: 5
+  }) ?? [];
+  const finalMemoryPayload = applyConflictMetadata(memoryPayload, conflicts);
 
   if (similar && memoryDecision.actionHint !== "create") {
-    const memory = repository.updateMemory(similar.memory.id, memoryPayload);
+    const memory = repository.updateMemory(similar.memory.id, finalMemoryPayload);
     repository.log("info", "memory", "Memory updated", {
       memoryId: memory.id,
       inputEventId: inputEvent.id,
       similarity: similar.score,
-      tags: memoryPayload.tags,
-      memoryType: memoryDecision.memoryType
+      tags: finalMemoryPayload.tags,
+      memoryType: memoryDecision.memoryType,
+      conflictStatus: finalMemoryPayload.conflictStatus,
+      conflictMemoryIds: finalMemoryPayload.conflictMemoryIds
     });
     return { memory, memoryAction: "updated" };
   }
@@ -59,12 +66,14 @@ export async function writeMemoryForDecision({
     return { memory: null, memoryAction: "skipped" };
   }
 
-  const memory = repository.createMemory(memoryPayload);
+  const memory = repository.createMemory(finalMemoryPayload);
   repository.log("info", "memory", "Memory created", {
     memoryId: memory.id,
     inputEventId: inputEvent.id,
-    tags: memoryPayload.tags,
-    memoryType: memoryDecision.memoryType
+    tags: finalMemoryPayload.tags,
+    memoryType: memoryDecision.memoryType,
+    conflictStatus: finalMemoryPayload.conflictStatus,
+    conflictMemoryIds: finalMemoryPayload.conflictMemoryIds
   });
   return { memory, memoryAction: "created" };
 }
@@ -88,6 +97,14 @@ function buildMemoryPayload({
     ...(synthesis?.bullets ?? [])
   ].slice(0, 10);
 
+  const memoryKind = inferMemoryKind({
+    memoryType: memoryDecision.memoryType,
+    tags: dedupeTags(analysis.tags, synthesis?.themes, memoryDecision.memoryType, analysis.category),
+    summary,
+    content: normalizedInput.normalizedText
+  });
+  const tags = dedupeTags(analysis.tags, synthesis?.themes, memoryDecision.memoryType, analysis.category, memoryKind);
+
   return {
     content: normalizeToText({
       input: normalizedInput.normalizedText,
@@ -95,15 +112,38 @@ function buildMemoryPayload({
       facts,
       source: normalizedInput.sourcePluginId,
       scenario: normalizedInput.scenario,
-      taskType: analysis.taskType
+      taskType: analysis.taskType,
+      memoryKind,
+      memoryType: memoryDecision.memoryType
     }),
     summary: buildMemorySummary(summary, memoryDecision.memoryType),
-    tags: dedupeTags(analysis.tags, synthesis?.themes, memoryDecision.memoryType, analysis.category),
+    tags,
+    memoryKind,
+    memoryType: memoryDecision.memoryType,
     sourceInputId: inputEvent.id,
     sourceType: SOURCE_TYPES.INPUT_EVENT,
     sourceId: inputEvent.id,
     importance: analysis.importance,
-    confidence: analysis.confidence
+    confidence: analysis.confidence,
+    conflictStatus: "none",
+    conflictMemoryIds: []
+  };
+}
+
+function applyConflictMetadata(memoryPayload: Record<string, unknown>, conflicts: Array<{ memory: MemoryRecord; score: number; reasons: string[] }>): Record<string, unknown> {
+  if (conflicts.length === 0) return memoryPayload;
+  const conflictIds = conflicts.map((item) => item.memory.id).filter(Boolean);
+  return {
+    ...memoryPayload,
+    tags: dedupeTags(memoryPayload.tags as string[], "conflict_review"),
+    confidence: Math.min(Number(memoryPayload.confidence ?? 0.7), 0.55),
+    conflictStatus: "suspected",
+    conflictMemoryIds: conflictIds,
+    conflictReasons: conflicts.map((item) => ({
+      memoryId: item.memory.id,
+      score: item.score,
+      reasons: item.reasons
+    }))
   };
 }
 

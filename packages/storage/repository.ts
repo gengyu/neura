@@ -12,7 +12,7 @@ import {
   SOURCE_TYPES,
   TASK_STATUSES
 } from "../shared/types.ts";
-import { similarityScore } from "../memory/memory.ts";
+import { detectMemoryConflict, inferMemoryKind, normalizeMemoryKind, similarityScore } from "../memory/memory.ts";
 import { searchMemoryRecords } from "../memory/langchain-memory.ts";
 
 export class Repository {
@@ -280,37 +280,64 @@ export class Repository {
     return this.getCapture(capture.id);
   }
 
-  createMemory({ content, summary, tags, sourceInputId, sourceType = SOURCE_TYPES.INPUT_EVENT, sourceId = sourceInputId ?? null, importance, confidence }) {
+  createMemory({ content, summary, tags, memoryKind = null, memoryType = null, conflictStatus = "none", conflictMemoryIds = [], sourceInputId, sourceType = SOURCE_TYPES.INPUT_EVENT, sourceId = sourceInputId ?? null, importance, confidence }) {
     const now = nowIso();
     const agentId = this.getActiveAgentId();
+    const normalizedMemoryKind = memoryKind
+      ? normalizeMemoryKind(memoryKind)
+      : inferMemoryKind({ memoryType, tags, summary, content });
+    let nextConflictStatus = conflictStatus ?? "none";
+    let nextConflictMemoryIds = normalizeIdList(conflictMemoryIds);
+    let nextConfidence = confidence;
+    if (nextConflictStatus === "none") {
+      const conflicts = this.findMemoryConflicts({ content, summary, tags, memoryKind: normalizedMemoryKind, memoryType }, { limit: 5 });
+      if (conflicts.length > 0) {
+        nextConflictStatus = "suspected";
+        nextConflictMemoryIds = conflicts.map((item) => item.memory.id);
+        nextConfidence = Math.min(Number(confidence ?? 0.7), 0.55);
+      }
+    }
     const memory = {
       id: createId("memory"),
       agentId,
       content,
       summary,
       tags,
+      memoryKind: normalizedMemoryKind,
+      memoryType,
+      conflictStatus: nextConflictStatus,
+      conflictMemoryIds: normalizeIdList(nextConflictMemoryIds),
       sourceInputId,
       sourceType,
       sourceId,
       importance,
-      confidence,
+      confidence: nextConfidence,
       createdAt: now,
       updatedAt: now
     };
     this.store.run(`
-      INSERT INTO memories (id, agent_id, content, summary, tags, source_input_id, source_type, source_id, importance, confidence, created_at, updated_at)
-      VALUES (${this.store.value(memory.id)}, ${this.store.value(agentId)}, ${this.store.value(content)}, ${this.store.value(summary)}, ${this.store.json(tags)}, ${this.store.value(sourceInputId)}, ${this.store.value(sourceType)}, ${this.store.value(sourceId)}, ${importance}, ${confidence}, ${this.store.value(now)}, ${this.store.value(now)});
+      INSERT INTO memories (id, agent_id, content, summary, tags, memory_kind, memory_type, conflict_status, conflict_memory_ids, source_input_id, source_type, source_id, importance, confidence, created_at, updated_at)
+      VALUES (${this.store.value(memory.id)}, ${this.store.value(agentId)}, ${this.store.value(content)}, ${this.store.value(summary)}, ${this.store.json(tags)}, ${this.store.value(normalizedMemoryKind)}, ${this.store.value(memoryType)}, ${this.store.value(nextConflictStatus)}, ${this.store.json(memory.conflictMemoryIds)}, ${this.store.value(sourceInputId)}, ${this.store.value(sourceType)}, ${this.store.value(sourceId)}, ${importance}, ${nextConfidence}, ${this.store.value(now)}, ${this.store.value(now)});
     `);
     return memory;
   }
 
-  updateMemory(id, { content, summary, tags, sourceInputId, sourceType = SOURCE_TYPES.INPUT_EVENT, sourceId = sourceInputId ?? null, importance, confidence }) {
+  updateMemory(id, { content, summary, tags, memoryKind = null, memoryType = null, conflictStatus = "none", conflictMemoryIds = [], sourceInputId, sourceType = SOURCE_TYPES.INPUT_EVENT, sourceId = sourceInputId ?? null, importance, confidence }) {
     const now = nowIso();
     const existing = this.getMemory(id);
     const mergedTags = mergeTags(existing?.tags, tags);
     const nextContent = mergeContent(existing?.content, content);
+    const nextMemoryType = memoryType ?? existing?.memoryType ?? null;
+    const inferredMemoryKind = inferMemoryKind({ memoryType: nextMemoryType, tags: mergedTags, summary, content: nextContent });
+    const nextMemoryKind = memoryKind
+      ? normalizeMemoryKind(memoryKind)
+      : chooseMergedMemoryKind([{ memoryKind: existing?.memoryKind }, { memoryKind: inferredMemoryKind }]);
+    const nextConflictStatus = conflictStatus ?? "none";
+    const nextConflictMemoryIds = normalizeIdList(conflictMemoryIds);
     const nextImportance = Math.max(Number(existing?.importance ?? 0), importance);
-    const nextConfidence = Math.max(Number(existing?.confidence ?? 0), confidence);
+    const nextConfidence = nextConflictStatus === "suspected"
+      ? Math.min(Number(existing?.confidence ?? confidence), confidence)
+      : Math.max(Number(existing?.confidence ?? 0), confidence);
 
     this.store.run(`
       UPDATE memories
@@ -318,6 +345,10 @@ export class Repository {
         content = ${this.store.value(nextContent)},
         summary = ${this.store.value(summary)},
         tags = ${this.store.json(mergedTags)},
+        memory_kind = ${this.store.value(nextMemoryKind)},
+        memory_type = ${this.store.value(nextMemoryType)},
+        conflict_status = ${this.store.value(nextConflictStatus)},
+        conflict_memory_ids = ${this.store.json(nextConflictMemoryIds)},
         source_input_id = ${this.store.value(sourceInputId)},
         source_type = ${this.store.value(sourceType)},
         source_id = ${this.store.value(sourceId)},
@@ -333,6 +364,10 @@ export class Repository {
       content: nextContent,
       summary,
       tags: mergedTags,
+      memoryKind: nextMemoryKind,
+      memoryType: nextMemoryType,
+      conflictStatus: nextConflictStatus,
+      conflictMemoryIds: nextConflictMemoryIds,
       sourceInputId,
       sourceType,
       sourceId,
@@ -362,17 +397,25 @@ export class Repository {
     return memory;
   }
 
-  editMemory(id, { summary = undefined, content = undefined, tags = undefined, importance = undefined, confidence = undefined } = {}) {
+  editMemory(id, { summary = undefined, content = undefined, tags = undefined, memoryKind = undefined, memoryType = undefined, conflictStatus = undefined, conflictMemoryIds = undefined, importance = undefined, confidence = undefined } = {}) {
     const existing = this.getMemory(id);
     if (!existing) return null;
     const next = {
       summary: summary === undefined ? existing.summary : String(summary).trim(),
       content: content === undefined ? existing.content : String(content).trim(),
       tags: tags === undefined ? existing.tags : normalizeTags(tags),
+      memoryType: memoryType === undefined ? existing.memoryType ?? null : String(memoryType).trim() || null,
+      conflictStatus: conflictStatus === undefined ? existing.conflictStatus ?? "none" : String(conflictStatus || "none"),
+      conflictMemoryIds: conflictMemoryIds === undefined ? existing.conflictMemoryIds ?? [] : normalizeIdList(conflictMemoryIds),
       importance: importance === undefined ? existing.importance : clampNumber(importance, 1, 5),
       confidence: confidence === undefined ? existing.confidence : clampNumber(confidence, 0, 1),
       updatedAt: nowIso()
     };
+    next.memoryKind = memoryKind === undefined
+      ? (memoryType === undefined && tags === undefined && summary === undefined && content === undefined
+        ? normalizeMemoryKind(existing.memoryKind)
+        : inferMemoryKind({ memoryType: next.memoryType, tags: next.tags, summary: next.summary, content: next.content }))
+      : normalizeMemoryKind(memoryKind);
     if (!next.summary) next.summary = existing.summary;
     if (!next.content) next.content = existing.content;
     this.store.run(`
@@ -380,6 +423,10 @@ export class Repository {
       SET summary = ${this.store.value(next.summary)},
           content = ${this.store.value(next.content)},
           tags = ${this.store.json(next.tags)},
+          memory_kind = ${this.store.value(next.memoryKind)},
+          memory_type = ${this.store.value(next.memoryType)},
+          conflict_status = ${this.store.value(next.conflictStatus)},
+          conflict_memory_ids = ${this.store.json(next.conflictMemoryIds)},
           importance = ${next.importance},
           confidence = ${next.confidence},
           updated_at = ${this.store.value(next.updatedAt)}
@@ -409,12 +456,16 @@ export class Repository {
     const mergedContent = mergeContent(target.content, sources.map((memory) => memory.content).join("\n\n"));
     const mergedSummary = target.summary;
     const mergedTags = mergeTags(target.tags, sources.flatMap((memory) => memory.tags ?? []));
+    const mergedKind = chooseMergedMemoryKind([target, ...sources]);
+    const mergedType = target.memoryType ?? sources.find((memory) => memory.memoryType)?.memoryType ?? null;
     const mergedImportance = Math.max(Number(target.importance ?? 0), ...sources.map((memory) => Number(memory.importance ?? 0)));
     const mergedConfidence = Math.max(Number(target.confidence ?? 0), ...sources.map((memory) => Number(memory.confidence ?? 0)));
     const updated = this.editMemory(targetId, {
       summary: mergedSummary,
       content: mergedContent,
       tags: mergedTags,
+      memoryKind: mergedKind,
+      memoryType: mergedType,
       importance: mergedImportance,
       confidence: mergedConfidence
     });
@@ -434,7 +485,7 @@ export class Repository {
 
   getMemory(id) {
     const rows = this.store.query(`
-      SELECT id, content, summary, tags, source_input_id AS sourceInputId, source_type AS sourceType, source_id AS sourceId, importance, confidence, created_at AS createdAt, updated_at AS updatedAt
+      SELECT id, content, summary, tags, memory_kind AS memoryKind, memory_type AS memoryType, conflict_status AS conflictStatus, conflict_memory_ids AS conflictMemoryIds, source_input_id AS sourceInputId, source_type AS sourceType, source_id AS sourceId, importance, confidence, created_at AS createdAt, updated_at AS updatedAt
       FROM memories
       WHERE id = ${this.store.value(id)} AND agent_id = ${this.store.value(this.getActiveAgentId())}
       LIMIT 1;
@@ -442,28 +493,91 @@ export class Repository {
     return rows[0] ? decodeMemory(rows[0]) : null;
   }
 
-  listMemories(limit = 20) {
+  listMemories(limit = 20, filters = {}) {
+    const clauses = [`agent_id = ${this.store.value(this.getActiveAgentId())}`];
+    if (filters.kind) {
+      clauses.push(`memory_kind = ${this.store.value(normalizeMemoryKind(filters.kind))}`);
+    }
+    if (filters.conflicts) {
+      clauses.push("conflict_status != 'none'");
+    }
     return this.store.query(`
-      SELECT id, agent_id AS agentId, content, summary, tags, source_input_id AS sourceInputId, source_type AS sourceType, source_id AS sourceId, importance, confidence, created_at AS createdAt, updated_at AS updatedAt
+      SELECT id, agent_id AS agentId, content, summary, tags, memory_kind AS memoryKind, memory_type AS memoryType, conflict_status AS conflictStatus, conflict_memory_ids AS conflictMemoryIds, source_input_id AS sourceInputId, source_type AS sourceType, source_id AS sourceId, importance, confidence, created_at AS createdAt, updated_at AS updatedAt
       FROM memories
-      WHERE agent_id = ${this.store.value(this.getActiveAgentId())}
+      WHERE ${clauses.join(" AND ")}
       ORDER BY created_at DESC
       LIMIT ${Number(limit)};
     `).map(decodeMemory);
   }
 
-  async searchMemories(query, limit = 20) {
-    const vectorMatches = await searchMemoryRecords(query, this.listMemories(1_000), limit);
+  async searchMemories(query, limit = 20, filters = {}) {
+    const memoryPool = this.listMemories(1_000, filters);
+    const vectorMatches = await searchMemoryRecords(query, memoryPool, limit);
     if (vectorMatches.length > 0) return vectorMatches;
     const like = `%${query}%`;
+    const clauses = [
+      `agent_id = ${this.store.value(this.getActiveAgentId())}`,
+      `(content LIKE ${this.store.value(like)} OR summary LIKE ${this.store.value(like)} OR tags LIKE ${this.store.value(like)} OR memory_kind LIKE ${this.store.value(like)} OR memory_type LIKE ${this.store.value(like)})`
+    ];
+    if (filters.kind) {
+      clauses.push(`memory_kind = ${this.store.value(normalizeMemoryKind(filters.kind))}`);
+    }
+    if (filters.conflicts) {
+      clauses.push("conflict_status != 'none'");
+    }
     return this.store.query(`
-      SELECT id, agent_id AS agentId, content, summary, tags, source_input_id AS sourceInputId, source_type AS sourceType, source_id AS sourceId, importance, confidence, created_at AS createdAt, updated_at AS updatedAt
+      SELECT id, agent_id AS agentId, content, summary, tags, memory_kind AS memoryKind, memory_type AS memoryType, conflict_status AS conflictStatus, conflict_memory_ids AS conflictMemoryIds, source_input_id AS sourceInputId, source_type AS sourceType, source_id AS sourceId, importance, confidence, created_at AS createdAt, updated_at AS updatedAt
       FROM memories
-      WHERE agent_id = ${this.store.value(this.getActiveAgentId())}
-        AND (content LIKE ${this.store.value(like)} OR summary LIKE ${this.store.value(like)} OR tags LIKE ${this.store.value(like)})
+      WHERE ${clauses.join(" AND ")}
       ORDER BY importance DESC, created_at DESC
       LIMIT ${Number(limit)};
     `).map((memory) => ({ ...decodeMemory(memory), vectorScore: 0 }));
+  }
+
+  findMemoryConflicts(payload, { limit = 5, excludeIds = [] } = {}) {
+    const exclude = new Set(excludeIds.map(String));
+    const kind = normalizeMemoryKind(payload.memoryKind ?? inferMemoryKind(payload));
+    const candidates = this.listMemories(200, { kind })
+      .filter((memory) => !exclude.has(String(memory.id)));
+    const payloadText = memoryConflictText(payload);
+
+    return candidates
+      .map((memory) => {
+        const conflict = detectMemoryConflict(payloadText, memoryConflictText(memory));
+        return {
+          memory,
+          score: Number(conflict.score.toFixed(6)),
+          conflicting: conflict.conflicting,
+          reasons: conflict.reasons
+        };
+      })
+      .filter((item) => item.conflicting && item.score >= 0.3)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+  }
+
+  memoryStats() {
+    const agentId = this.store.value(this.getActiveAgentId());
+    const byKind = this.store.query(`
+      SELECT memory_kind AS kind, COUNT(*) AS count, AVG(importance) AS averageImportance, AVG(confidence) AS averageConfidence
+      FROM memories
+      WHERE agent_id = ${agentId}
+      GROUP BY memory_kind
+      ORDER BY count DESC, kind ASC;
+    `).map((row) => ({
+      kind: normalizeMemoryKind(row.kind),
+      count: Number(row.count ?? 0),
+      averageImportance: roundNumber(row.averageImportance),
+      averageConfidence: roundNumber(row.averageConfidence)
+    }));
+    const totals = this.store.query(`
+      SELECT
+        COUNT(*) AS count,
+        SUM(CASE WHEN conflict_status != 'none' THEN 1 ELSE 0 END) AS conflicts
+      FROM memories
+      WHERE agent_id = ${agentId};
+    `)[0] ?? {};
+    return { total: Number(totals.count ?? 0), conflicts: Number(totals.conflicts ?? 0), byKind };
   }
 
   async findSimilarMemory({ content, tags }, threshold = 0.78) {
@@ -796,8 +910,16 @@ export class Repository {
 }
 
 function decodeMemory(row) {
+  const memoryType = row.memoryType ?? null;
+  const memoryKind = row.memoryKind
+    ? normalizeMemoryKind(row.memoryKind)
+    : inferMemoryKind({ memoryType, tags: parseJsonArray(row.tags), summary: row.summary, content: row.content });
   return {
     ...row,
+    memoryKind,
+    memoryType,
+    conflictStatus: row.conflictStatus ?? "none",
+    conflictMemoryIds: parseJsonArray(row.conflictMemoryIds),
     tags: parseJsonArray(row.tags)
   };
 }
@@ -847,10 +969,22 @@ function normalizeTags(tags) {
   )].slice(0, 12);
 }
 
+function normalizeIdList(values) {
+  return [...new Set((Array.isArray(values) ? values : parseJsonArray(values))
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+  )].slice(0, 12);
+}
+
 function clampNumber(value, min, max) {
   const number = Number(value);
   if (!Number.isFinite(number)) return min;
   return Math.max(min, Math.min(max, number));
+}
+
+function roundNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Number(number.toFixed(3)) : 0;
 }
 
 function mergeContent(existing, next) {
@@ -858,6 +992,22 @@ function mergeContent(existing, next) {
   if (existing === next || existing.includes(next)) return existing;
   if (next.includes(existing)) return next;
   return `${existing}\n\n${next}`;
+}
+
+function memoryConflictText(memory) {
+  return [
+    memory.summary,
+    memory.content,
+    memory.memoryKind,
+    memory.memoryType,
+    ...(Array.isArray(memory.tags) ? memory.tags : [])
+  ].filter(Boolean).join("\n");
+}
+
+function chooseMergedMemoryKind(memories) {
+  const priority = ["decision", "preference", "project", "person", "task", "knowledge", "fact", "note"];
+  const kinds = new Set(memories.map((memory) => normalizeMemoryKind(memory?.memoryKind)));
+  return priority.find((kind) => kinds.has(kind)) ?? "note";
 }
 
 function matchesCaptureFilters(capture, filters = {}) {

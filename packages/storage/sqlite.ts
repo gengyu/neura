@@ -84,6 +84,10 @@ export class SQLiteStore {
         content TEXT NOT NULL,
         summary TEXT NOT NULL,
         tags TEXT NOT NULL,
+        memory_kind TEXT NOT NULL DEFAULT 'note',
+        memory_type TEXT,
+        conflict_status TEXT NOT NULL DEFAULT 'none',
+        conflict_memory_ids TEXT NOT NULL DEFAULT '[]',
         source_input_id TEXT,
         source_type TEXT NOT NULL DEFAULT 'input_event',
         source_id TEXT,
@@ -167,6 +171,10 @@ export class SQLiteStore {
     this.ensureColumn("tasks", "source_type", "TEXT NOT NULL DEFAULT 'input_event'");
     this.ensureColumn("tasks", "source_id", "TEXT");
     this.ensureColumn("memories", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
+    this.ensureColumn("memories", "memory_kind", "TEXT NOT NULL DEFAULT 'note'");
+    this.ensureColumn("memories", "memory_type", "TEXT");
+    this.ensureColumn("memories", "conflict_status", "TEXT NOT NULL DEFAULT 'none'");
+    this.ensureColumn("memories", "conflict_memory_ids", "TEXT NOT NULL DEFAULT '[]'");
     this.ensureColumn("memories", "source_type", "TEXT NOT NULL DEFAULT 'input_event'");
     this.ensureColumn("memories", "source_id", "TEXT");
     this.ensureColumn("output_events", "agent_id", "TEXT NOT NULL DEFAULT 'default-agent'");
@@ -198,6 +206,8 @@ export class SQLiteStore {
       "CREATE INDEX IF NOT EXISTS idx_tasks_agent_created ON tasks(agent_id, created_at DESC);",
       "CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(agent_id, source_type, source_id);",
       "CREATE INDEX IF NOT EXISTS idx_memories_agent_updated ON memories(agent_id, updated_at DESC);",
+      "CREATE INDEX IF NOT EXISTS idx_memories_agent_kind ON memories(agent_id, memory_kind, updated_at DESC);",
+      "CREATE INDEX IF NOT EXISTS idx_memories_agent_conflict ON memories(agent_id, conflict_status, updated_at DESC);",
       "CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(agent_id, source_type, source_id);",
       "CREATE INDEX IF NOT EXISTS idx_output_events_agent_created ON output_events(agent_id, created_at DESC);",
       "CREATE INDEX IF NOT EXISTS idx_tool_calls_agent_created ON tool_calls(agent_id, created_at DESC);",

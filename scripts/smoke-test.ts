@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { RUNTIME_EVENT_TYPES, SOURCE_TYPES } from "../packages/shared/types.ts";
 
 const smokeDatabasePath = "data/neura-smoke-test.db";
@@ -90,11 +90,23 @@ if (!tagUpdate.includes("产品核心")) {
 }
 console.log("memory tag update: OK");
 
-const editedMemory = run(["memory", "edit", memoryId, "--summary", "[产品设定] Neura 插件体系只分输入插件和输出插件", "--importance", "5", "--confidence", "0.99"]);
-if (!editedMemory.includes("已编辑记忆") || !editedMemory.includes("产品设定")) {
-  throw new Error("Expected memory edit command to update summary");
+const editedMemory = run(["memory", "edit", memoryId, "--summary", "[产品设定] Neura 插件体系只分输入插件和输出插件", "--kind", "decision", "--type", "产品决策", "--importance", "5", "--confidence", "0.99"]);
+if (!editedMemory.includes("已编辑记忆") || !editedMemory.includes("产品设定") || !editedMemory.includes("decision")) {
+  throw new Error("Expected memory edit command to update summary and memory kind");
 }
 console.log("memory edit: OK");
+
+const memoryStats = run(["memory", "stats"]);
+if (!memoryStats.includes("记忆总数:") || !memoryStats.includes("decision")) {
+  throw new Error("Expected memory stats to include layered memory kind counts");
+}
+console.log("memory stats: OK");
+
+const decisionMemories = run(["memory", "list", "--kind", "decision"]);
+if (!decisionMemories.includes("类型: decision")) {
+  throw new Error("Expected memory list --kind to filter layered memories");
+}
+console.log("memory kind filter: OK");
 
 const memories = run(["memory", "search", "插件体系"]);
 if (!memories.includes("插件") || !memories.includes("产品核心")) {
@@ -102,6 +114,9 @@ if (!memories.includes("插件") || !memories.includes("产品核心")) {
 }
 if (!memories.includes("来源: input_event")) {
   throw new Error("Expected memories to show input_event source");
+}
+if (!memories.includes("类型: decision")) {
+  throw new Error("Expected memories to show layered memory kind");
 }
 if (!memories.includes("相关性:") || !memories.includes("命中原因:")) {
   throw new Error("Expected memory search to expose relevance score and match reasons");
@@ -139,6 +154,40 @@ console.log("schedule output source: OK");
 writeFileSync(approvalPath, "before approval");
 const { createRuntime } = await import("../packages/core/runtime.ts");
 const runtime = await createRuntime();
+
+const conflictBase = runtime.repository.createMemory({
+  content: "Neura 应该优先接入真实 embedding。",
+  summary: "Neura 应该优先接入真实 embedding",
+  tags: ["conflict-smoke"],
+  memoryKind: "decision",
+  memoryType: "技术决策",
+  sourceInputId: null,
+  sourceType: SOURCE_TYPES.MANUAL,
+  sourceId: "smoke-conflict-base",
+  importance: 4,
+  confidence: 0.95
+});
+const conflictCandidate = runtime.repository.createMemory({
+  content: "Neura 不应该优先接入真实 embedding。",
+  summary: "Neura 不应该优先接入真实 embedding",
+  tags: ["conflict-smoke"],
+  memoryKind: "decision",
+  memoryType: "技术决策",
+  sourceInputId: null,
+  sourceType: SOURCE_TYPES.MANUAL,
+  sourceId: "smoke-conflict-candidate",
+  importance: 4,
+  confidence: 0.95
+});
+if (conflictCandidate.conflictStatus !== "suspected" || !conflictCandidate.conflictMemoryIds.includes(conflictBase.id) || Number(conflictCandidate.confidence) > 0.55) {
+  throw new Error("Expected conflicting memory to be marked suspected and confidence-adjusted");
+}
+const conflictList = run(["memory", "conflicts"]);
+if (!conflictList.includes(conflictCandidate.id) || !conflictList.includes(conflictBase.id)) {
+  throw new Error("Expected memory conflicts command to show suspected conflict");
+}
+console.log("memory conflict detection: OK");
+
 const approvalResult = await runtime.tools.writeFile(approvalPath, "after approval");
 if (!approvalResult.confirmationRequired || !approvalResult.requestId) {
   throw new Error("Expected overwriting an existing file to require approval");
@@ -298,6 +347,9 @@ if (!memoryExportMd.includes("已导出记忆") || !existsSync(memoryExportMdPat
 }
 if (!memoryExportJson.includes("已导出记忆") || !existsSync(memoryExportJsonPath)) {
   throw new Error("Expected JSON memory export to create a file");
+}
+if (!readFileSync(memoryExportJsonPath, "utf8").includes("\"memoryKind\"")) {
+  throw new Error("Expected JSON memory export to include memoryKind");
 }
 const memoryImport = run(["memory", "import", memoryExportJsonPath, "--yes"]);
 if (!memoryImport.includes("已导入记忆") || !memoryImport.includes("更新:")) {

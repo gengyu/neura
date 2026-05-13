@@ -600,21 +600,47 @@
           </div>
           <div class="toolbar">
             <input id="memoryQuery" placeholder="搜索记忆" />
+            <select id="memoryKind">
+              <option value="">全部层级</option>
+              <option value="fact">fact</option>
+              <option value="preference">preference</option>
+              <option value="project">project</option>
+              <option value="person">person</option>
+              <option value="task">task</option>
+              <option value="decision">decision</option>
+              <option value="knowledge">knowledge</option>
+              <option value="note">note</option>
+            </select>
+            <label><input type="checkbox" id="memoryConflicts" /> 疑似冲突</label>
             <button class="btn" id="searchMemory">搜索</button>
             <button class="btn ghost" id="clearMemorySearch">清空</button>
           </div>
+          <div id="memoryStats"></div>
           <div id="memoryTable"></div>
         `;
         const input = document.querySelector("#memoryQuery");
-        document.querySelector("#searchMemory").addEventListener("click", () => load(input.value.trim()));
-        document.querySelector("#clearMemorySearch").addEventListener("click", () => { input.value = ""; load(); });
-        input.addEventListener("keydown", (event) => { if (event.key === "Enter") load(input.value.trim()); });
+        const kind = document.querySelector("#memoryKind");
+        const conflicts = document.querySelector("#memoryConflicts");
+        document.querySelector("#searchMemory").addEventListener("click", () => load(input.value.trim(), kind.value, conflicts.checked));
+        document.querySelector("#clearMemorySearch").addEventListener("click", () => { input.value = ""; kind.value = ""; conflicts.checked = false; load(); });
+        input.addEventListener("keydown", (event) => { if (event.key === "Enter") load(input.value.trim(), kind.value, conflicts.checked); });
+        kind.addEventListener("change", () => load(input.value.trim(), kind.value, conflicts.checked));
+        conflicts.addEventListener("change", () => load(input.value.trim(), kind.value, conflicts.checked));
         await load();
 
-        async function load(query = "") {
-          const rows = await api(`/api/memories${query ? `?query=${encodeURIComponent(query)}` : ""}`);
-          document.querySelector("#memoryTable").innerHTML = renderTable(["summary", "tags", "relevance", "reasons", "sourceType", "sourceId", "importance", "confidence", "updatedAt", "action"], rows.map((row) => ({
+        async function load(query = "", selectedKind = "", onlyConflicts = false) {
+          const params = new URLSearchParams();
+          if (query) params.set("query", query);
+          if (selectedKind) params.set("kind", selectedKind);
+          if (onlyConflicts) params.set("conflicts", "true");
+          const rows = await api(`/api/memories${params.toString() ? `?${params}` : ""}`);
+          const stats = await api("/api/memories/stats");
+          document.querySelector("#memoryStats").innerHTML = `<div class="metric-row">${stats.byKind.map((item) => metric(item.kind, item.count)).join("")}</div>`;
+          document.querySelector("#memoryTable").innerHTML = renderTable(["summary", "kind", "type", "conflict", "tags", "relevance", "reasons", "sourceType", "sourceId", "importance", "confidence", "updatedAt", "action"], rows.map((row) => ({
             ...row,
+            kind: `<span class="tag">${escapeHtml(row.memoryKind ?? "note")}</span>`,
+            type: row.memoryType ?? "",
+            conflict: row.conflictStatus && row.conflictStatus !== "none" ? `<span class="tag">${escapeHtml(row.conflictStatus)}</span>` : "",
             tags: row.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join(""),
             relevance: row.score === undefined && row.vectorScore === undefined ? "" : Number(row.score ?? row.vectorScore).toFixed(3),
             reasons: Array.isArray(row.matchReasons) ? row.matchReasons.map((reason) => `<span class="tag">${escapeHtml(reason)}</span>`).join("") : "",
@@ -629,14 +655,17 @@
               if (summary === null) return;
               const tags = prompt("编辑标签，逗号分隔", (row.tags ?? []).join(", "));
               if (tags === null) return;
+              const memoryKind = prompt("编辑记忆层级: fact/preference/project/person/task/decision/knowledge/note", row.memoryKind ?? "note");
+              if (memoryKind === null) return;
               await runAction(async () => api(`/api/memories/${button.dataset.memoryEdit}`, {
                 method: "POST",
                 body: JSON.stringify({
                   summary,
+                  memoryKind,
                   tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean)
                 })
               }), "记忆已更新");
-              await load(input.value.trim());
+              await load(input.value.trim(), kind.value, conflicts.checked);
             });
           });
           view.querySelectorAll("button[data-memory-delete]").forEach((button) => {
@@ -644,7 +673,7 @@
               if (!confirm("确认删除这条记忆？此操作不可撤销。")) return;
               await runAction(async () => api(`/api/memories/${button.dataset.memoryDelete}`, { method: "DELETE" }), "记忆已删除");
               await refreshChrome();
-              await load(input.value.trim());
+              await load(input.value.trim(), kind.value, conflicts.checked);
             });
           });
         }

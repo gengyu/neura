@@ -42,6 +42,8 @@ const MemoryEditSchema = z.object({
   summary: z.string().trim().min(1).optional(),
   content: z.string().trim().min(1).optional(),
   tags: z.array(z.string()).optional(),
+  memoryKind: z.enum(["fact", "preference", "project", "person", "task", "decision", "knowledge", "note"]).optional(),
+  memoryType: z.string().trim().nullable().optional(),
   importance: z.coerce.number().min(1).max(5).optional(),
   confidence: z.coerce.number().min(0).max(1).optional()
 });
@@ -124,8 +126,13 @@ export default {
 
     app.get("/api/memories", async (request) => {
       const query = request.query?.query;
-      return query ? await runtime.repository.searchMemories(query) : runtime.repository.listMemories(50);
+      const kind = request.query?.kind;
+      const conflicts = request.query?.conflicts === "true";
+      return query
+        ? await runtime.repository.searchMemories(query, 50, { kind, conflicts })
+        : runtime.repository.listMemories(50, { kind, conflicts });
     });
+    app.get("/api/memories/stats", async () => runtime.repository.memoryStats());
     app.post("/api/memories/:id", async (request) => {
       const body = MemoryEditSchema.parse(request.body ?? {});
       const memory = runtime.repository.editMemory(request.params.id, body);
