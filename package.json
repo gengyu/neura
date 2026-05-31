@@ -1,9 +1,12 @@
 {
-  "name": "neura",
+  "name": "@neura/neura",
   "version": "0.1.0",
   "description": "A UI-less personal agent runtime.",
   "type": "module",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "packageManager": "pnpm@10.29.2",
   "keywords": [
     "agent",

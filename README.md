@@ -1,5 +1,7 @@
 # Neura
 
+> Neura is a UI-less, local-first, long-running personal agent runtime built with TypeScript and Bun. Inputs from CLI, webhooks, folder and screenshot watchers flow into a single Agent Loop that performs model analysis, long-term memory, high-risk approvals and scheduling — all stored in local SQLite.
+
 Neura 是一个无 UI 优先、长期运行的个人智能体运行时原型。
 
 当前 MVP 已跑通：
@@ -34,8 +36,8 @@ Neura 是一个无 UI 优先、长期运行的个人智能体运行时原型。
 
 如果目标是尽快完整理解整个项目，优先阅读：
 
-- [docs/project-architecture.md](/Users/gengyu/github/neura/docs/project-architecture.md)
-- [docs/product-logic-coverage.md](/Users/gengyu/github/neura/docs/product-logic-coverage.md)
+- [docs/project-architecture.md](./docs/project-architecture.md)
+- [docs/product-logic-coverage.md](./docs/product-logic-coverage.md)
 
 ## 使用
 
@@ -126,17 +128,13 @@ pnpm run release:check
 pnpm run pack:npm
 ```
 
-正式发布：
-
-```bash
-pnpm run publish:npm
-```
-
-如果后续改成 scoped 包并需要公开发布，可以使用：
+正式发布（包名为 scoped 包 `@neura/neura`，需公开发布）：
 
 ```bash
 pnpm run publish:npm:public
 ```
+
+> `@neura/neura` 为 scoped 包，`package.json` 已配置 `publishConfig.access=public`；发布前需在 npm 上拥有 `@neura` 这个 scope（组织/用户）。
 
 npm 包通过 `files` 白名单发布源码和运行所需资源，不会包含 `data/`、`logs/`、`backups/`、`exports/` 或 `.env`。
 
