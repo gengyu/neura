@@ -128,17 +128,13 @@ pnpm run release:check
 pnpm run pack:npm
 ```
 
-正式发布：
-
-```bash
-pnpm run publish:npm
-```
-
-如果后续改成 scoped 包并需要公开发布，可以使用：
+正式发布（包名为 scoped 包 `@neura/neura`，需公开发布）：
 
 ```bash
 pnpm run publish:npm:public
 ```
+
+> `@neura/neura` 为 scoped 包，`package.json` 已配置 `publishConfig.access=public`；发布前需在 npm 上拥有 `@neura` 这个 scope（组织/用户）。
 
 npm 包通过 `files` 白名单发布源码和运行所需资源，不会包含 `data/`、`logs/`、`backups/`、`exports/` 或 `.env`。
 
