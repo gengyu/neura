@@ -1,5 +1,7 @@
 # Neura
 
+> Neura is a UI-less, local-first, long-running personal agent runtime built with TypeScript and Bun. Inputs from CLI, webhooks, folder and screenshot watchers flow into a single Agent Loop that performs model analysis, long-term memory, high-risk approvals and scheduling — all stored in local SQLite.
+
 Neura 是一个无 UI 优先、长期运行的个人智能体运行时原型。
 
 当前 MVP 已跑通：
@@ -34,8 +36,8 @@ Neura 是一个无 UI 优先、长期运行的个人智能体运行时原型。
 
 如果目标是尽快完整理解整个项目，优先阅读：
 
-- [docs/project-architecture.md](/Users/gengyu/github/neura/docs/project-architecture.md)
-- [docs/product-logic-coverage.md](/Users/gengyu/github/neura/docs/product-logic-coverage.md)
+- [docs/project-architecture.md](./docs/project-architecture.md)
+- [docs/product-logic-coverage.md](./docs/product-logic-coverage.md)
 
 ## 使用
 
